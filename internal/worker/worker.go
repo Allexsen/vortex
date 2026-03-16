@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/url"
 	"time"
@@ -62,15 +63,13 @@ func (w *Worker) Process(msgs <-chan amqp.Delivery) {
 		var task models.CrawlTask
 		err := json.Unmarshal(msg.Body, &task)
 		if err != nil {
-			log.Printf("Error unmarshaling message: %v", err)
-			msg.Ack(false)
+			HandleError(fmt.Errorf("%w: %v", ErrPermanent, err), msg)
 			continue
 		}
 
 		parsedURL, err := url.Parse(task.URL)
 		if err != nil {
-			log.Printf("Invalid URL: %s", task.URL)
-			msg.Ack(false)
+			HandleError(fmt.Errorf("%w: %v", ErrPermanent, err), msg)
 			continue
 		}
 
@@ -79,8 +78,7 @@ func (w *Worker) Process(msgs <-chan amqp.Delivery) {
 		allowed, err := w.limiter.Allow(ctx, domain)
 		cancel()
 		if err != nil {
-			log.Printf("Error checking rate limit for domain %s: %v", domain, err)
-			msg.Ack(false)
+			HandleError(fmt.Errorf("%w: %v", ErrPermanent, err), msg)
 			continue
 		}
 
@@ -91,8 +89,7 @@ func (w *Worker) Process(msgs <-chan amqp.Delivery) {
 			err = w.Queue.Push(ctx, task)
 			cancel()
 			if err != nil {
-				log.Printf("Failed to push URL to cooldown queue: %v", err)
-				msg.Nack(false, true) // Reject message and requeue
+				HandleError(fmt.Errorf("%w: %v", ErrPermanent, err), msg)
 				continue
 			}
 			msg.Ack(false)
