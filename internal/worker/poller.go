@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 	"vortex/internal/cooldown"
 	"vortex/internal/logger"
@@ -23,18 +24,21 @@ func NewPoller(queue cooldown.Queue, ch *amqp.Channel) *Poller {
 
 func (p *Poller) Start(ctx context.Context) {
 	for {
-		urls, err := p.queue.PopExpired(ctx)
+		tasks, err := p.queue.PopExpired(ctx)
 		logger.FailOnError(err, "Failed to fetch expired URLs from cooldown queue")
 
-		for _, url := range urls {
+		for _, task := range tasks {
+			taskJSON, err := json.Marshal(task)
+			logger.FailOnError(err, "Failed to marshal task")
+
 			err = p.ch.PublishWithContext(ctx,
 				"",                        // exchange
 				"vortex:frontier:pending", // routing key
 				false,                     // mandatory
 				false,                     // immediate
 				amqp.Publishing{
-					ContentType: "text/plain",
-					Body:        []byte(url),
+					ContentType: "application/json",
+					Body:        taskJSON,
 				},
 			)
 			logger.FailOnError(err, "Failed to publish URL back to frontier")
