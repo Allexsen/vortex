@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -60,43 +61,54 @@ func (w *Worker) Process(msgs <-chan amqp.Delivery) {
 	for msg := range msgs {
 		log.Printf("Received a message: %s", msg.Body)
 
-		var task models.CrawlTask
-		err := json.Unmarshal(msg.Body, &task)
-		if err != nil {
-			HandleError(fmt.Errorf("%w: %v", ErrPermanent, err), msg)
-			continue
-		}
-
-		parsedURL, err := url.Parse(task.URL)
-		if err != nil {
-			HandleError(fmt.Errorf("%w: %v", ErrPermanent, err), msg)
-			continue
-		}
-
-		domain := parsedURL.Hostname()
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second) // MUST CANCEL MANUALLY; DO NOT DEFER.
-		allowed, err := w.limiter.Allow(ctx, domain)
+		err := w.processTask(ctx, msg.Body)
 		cancel()
-		if err != nil {
-			HandleError(fmt.Errorf("%w: %v", ErrPermanent, err), msg)
-			continue
-		}
 
-		if !allowed {
-			log.Printf("Rate limit exceeded for domain %s, delaying URL", domain)
-
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second) // MUST CANCEL MANUALLY; DO NOT DEFER.
-			err = w.Queue.Push(ctx, task)
-			cancel()
-			if err != nil {
-				HandleError(fmt.Errorf("%w: %v", ErrPermanent, err), msg)
-				continue
-			}
+		if err == nil {
 			msg.Ack(false)
 			continue
 		}
 
-		time.Sleep(1 * time.Second) // Simulate work
+		if errors.Is(err, ErrTransient) {
+			log.Printf("[TRANSIENT] Requeuing task: %v", err)
+			msg.Nack(false, true)
+			continue
+		}
+
+		log.Printf("[PERMANENT] Dropping task: %v", err)
 		msg.Ack(false)
 	}
+}
+
+func (w *Worker) processTask(ctx context.Context, body []byte) error {
+	var task models.CrawlTask
+	err := json.Unmarshal(body, &task)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrPermanent, err)
+	}
+
+	parsedURL, err := url.Parse(task.URL)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrPermanent, err)
+	}
+
+	domain := parsedURL.Hostname()
+	allowed, err := w.limiter.Allow(ctx, domain)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrTransient, err)
+	}
+	if !allowed {
+		log.Printf("Rate limit exceeded for domain %s, pushing to cooldown", domain)
+
+		err = w.Queue.Push(ctx, task)
+		if err != nil {
+			return fmt.Errorf("%w: failed to push to cooldown: %v", ErrTransient, err)
+		}
+
+		return nil
+	}
+
+	time.Sleep(1 * time.Second) // Simulate work
+	return nil
 }

@@ -3,9 +3,9 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"time"
 	"vortex/internal/cooldown"
-	"vortex/internal/logger"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -23,27 +23,43 @@ func NewPoller(queue cooldown.Queue, ch *amqp.Channel) *Poller {
 }
 
 func (p *Poller) Start(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
 	for {
-		tasks, err := p.queue.PopExpired(ctx)
-		logger.FailOnError(err, "Failed to fetch expired URLs from cooldown queue")
+		select {
+		case <-ctx.Done():
+			log.Println("Poller shutting down...")
+			return
+		case <-ticker.C:
+			tasks, err := p.queue.PopExpired(ctx)
+			if err != nil {
+				log.Printf("[ERROR] Failed to pop expired tasks: %v", err)
+				continue
+			}
 
-		for _, task := range tasks {
-			taskJSON, err := json.Marshal(task)
-			logger.FailOnError(err, "Failed to marshal task")
+			for _, task := range tasks {
+				taskJSON, err := json.Marshal(task)
+				if err != nil {
+					log.Printf("[ERROR] Failed to marshal task: %v", err)
+					continue
+				}
 
-			err = p.ch.PublishWithContext(ctx,
-				"",                        // exchange
-				"vortex:frontier:pending", // routing key
-				false,                     // mandatory
-				false,                     // immediate
-				amqp.Publishing{
-					ContentType: "application/json",
-					Body:        taskJSON,
-				},
-			)
-			logger.FailOnError(err, "Failed to publish URL back to frontier")
+				err = p.ch.PublishWithContext(ctx,
+					"",                        // exchange
+					"vortex:frontier:pending", // routing key
+					false,                     // mandatory
+					false,                     // immediate
+					amqp.Publishing{
+						ContentType: "application/json",
+						Body:        taskJSON,
+					},
+				)
+				if err != nil {
+					log.Printf("[ERROR] Failed to publish task back to frontier: %v", err)
+					continue
+				}
+			}
 		}
-
-		time.Sleep(5 * time.Second)
 	}
 }

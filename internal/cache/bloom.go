@@ -6,7 +6,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func IsNewURL(ctx context.Context, rdb *redis.Client, url string) (bool, error) {
+func CheckAndSetURL(ctx context.Context, rdb *redis.Client, url string) (bool, error) {
 	resp, err := rdb.Do(ctx, "BF.ADD", "vortex:seen:urls", url).Bool()
 	if err != nil {
 		return false, err
