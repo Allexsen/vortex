@@ -12,19 +12,25 @@ import (
 
 type Poller struct {
 	queue cooldown.Queue
-	ch    *amqp.Channel
+	conn  *amqp.Connection
 }
 
-func NewPoller(queue cooldown.Queue, ch *amqp.Channel) *Poller {
+func NewPoller(queue cooldown.Queue, conn *amqp.Connection) *Poller {
 	return &Poller{
 		queue: queue,
-		ch:    ch,
+		conn:  conn,
 	}
 }
 
-func (p *Poller) Start(ctx context.Context) {
+func (p *Poller) Run(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+
+	ch, err := p.conn.Channel()
+	if err != nil {
+		log.Fatalf("[FATAL] Failed to open channel: %v", err)
+	}
+	defer ch.Close()
 
 	for {
 		select {
@@ -45,7 +51,7 @@ func (p *Poller) Start(ctx context.Context) {
 					continue
 				}
 
-				err = p.ch.PublishWithContext(ctx,
+				err = ch.PublishWithContext(ctx,
 					"",                        // exchange
 					"vortex:frontier:pending", // routing key
 					false,                     // mandatory

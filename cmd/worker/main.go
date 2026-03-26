@@ -37,12 +37,6 @@ func main() {
 	}
 	defer conn.Close()
 
-	ch, err := conn.Channel()
-	if err != nil {
-		log.Fatalf("[FATAL] Failed to open a channel: %v", err)
-	}
-	defer ch.Close()
-
 	rdb := cache.NewRedisClient()
 	for i := 1; i <= 3; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -62,18 +56,17 @@ func main() {
 	limiter := ratelimit.NewRedisLimiter(rdb, "vortex:limit:", 10, time.Second)
 	queue := cooldown.NewRedisQueue(rdb, "vortex:cooldown:urls", 1*time.Second)
 
-	w := worker.NewWorker(ch, limiter, queue)
-	msgs, err := w.PrepareStream("vortex:frontier:pending")
-	if err != nil {
-		log.Fatalf("[FATAL] Failed to prepare message stream: %v", err)
-	}
-
+	w := worker.NewWorker(conn, limiter, queue)
 	for range 50 {
-		go w.Process(msgs)
+		go func() {
+			if err := w.Run(context.Background(), "vortex:frontier:pending"); err != nil {
+				log.Printf("[ERROR] Worker encountered an error: %v", err)
+			}
+		}()
 	}
 
-	p := worker.NewPoller(queue, ch)
-	go p.Start(context.Background())
+	p := worker.NewPoller(queue, conn)
+	go p.Run(context.Background())
 
 	var forever chan struct{}
 

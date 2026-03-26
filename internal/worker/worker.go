@@ -16,21 +16,32 @@ import (
 )
 
 type Worker struct {
-	ch      *amqp.Channel
+	conn    *amqp.Connection
 	limiter ratelimit.Limiter
 	Queue   cooldown.Queue
 }
 
-func NewWorker(ch *amqp.Channel, limiter ratelimit.Limiter, queue cooldown.Queue) *Worker {
+func NewWorker(conn *amqp.Connection, limiter ratelimit.Limiter, queue cooldown.Queue) *Worker {
 	return &Worker{
-		ch:      ch,
+		conn:    conn,
 		limiter: limiter,
 		Queue:   queue,
 	}
 }
 
-func (w *Worker) PrepareStream(queueName string) (<-chan amqp.Delivery, error) {
-	q, err := w.ch.QueueDeclare(
+func (w *Worker) Run(ctx context.Context, queueName string) error {
+	ch, err := w.conn.Channel()
+	if err != nil {
+		return fmt.Errorf("failed to open channel: %w", err)
+	}
+	defer ch.Close()
+
+	err = ch.Qos(1, 0, false)
+	if err != nil {
+		return fmt.Errorf("failed to set QoS: %w", err)
+	}
+
+	q, err := ch.QueueDeclare(
 		queueName, // name
 		true,      // durable
 		false,     // delete when unused
@@ -39,9 +50,10 @@ func (w *Worker) PrepareStream(queueName string) (<-chan amqp.Delivery, error) {
 		nil,       // arguments
 	)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("failed to declare queue: %w", err)
 	}
-	msgs, err := w.ch.Consume(
+
+	msgs, err := ch.Consume(
 		q.Name, // queue
 		"",     // consumer
 		false,  // auto-ack
@@ -51,13 +63,10 @@ func (w *Worker) PrepareStream(queueName string) (<-chan amqp.Delivery, error) {
 		nil,    // args
 	)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("failed to start consuming: %w", err)
 	}
-	return msgs, nil
-}
 
-func (w *Worker) Process(msgs <-chan amqp.Delivery) {
-	log.Println(" [*] Waiting for messages. To exit press CTRL+C")
+	log.Println(" [*] Worker started, waiting for messages")
 	for msg := range msgs {
 		log.Printf("Received a message: %s", msg.Body)
 
@@ -79,6 +88,8 @@ func (w *Worker) Process(msgs <-chan amqp.Delivery) {
 		log.Printf("[PERMANENT] Dropping task: %v", err)
 		msg.Ack(false)
 	}
+
+	return nil
 }
 
 func (w *Worker) processTask(ctx context.Context, body []byte) error {
