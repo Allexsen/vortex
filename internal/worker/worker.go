@@ -11,6 +11,7 @@ import (
 	"vortex/internal/cooldown"
 	"vortex/internal/models"
 	"vortex/internal/ratelimit"
+	robotstxt "vortex/internal/robots"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -18,14 +19,16 @@ import (
 type Worker struct {
 	conn    *amqp.Connection
 	limiter ratelimit.Limiter
-	Queue   cooldown.Queue
+	queue   cooldown.Queue
+	robots  *robotstxt.EtiquetteEngine
 }
 
-func NewWorker(conn *amqp.Connection, limiter ratelimit.Limiter, queue cooldown.Queue) *Worker {
+func NewWorker(conn *amqp.Connection, limiter ratelimit.Limiter, queue cooldown.Queue, robots *robotstxt.EtiquetteEngine) *Worker {
 	return &Worker{
 		conn:    conn,
 		limiter: limiter,
-		Queue:   queue,
+		queue:   queue,
+		robots:  robots,
 	}
 }
 
@@ -70,7 +73,7 @@ func (w *Worker) Run(ctx context.Context, queueName string) error {
 	for msg := range msgs {
 		log.Printf("Received a message: %s", msg.Body)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second) // MUST CANCEL MANUALLY; DO NOT DEFER.
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second) // MUST CANCEL MANUALLY; DO NOT DEFER.
 		err := w.processTask(ctx, msg.Body)
 		cancel()
 
@@ -104,15 +107,30 @@ func (w *Worker) processTask(ctx context.Context, body []byte) error {
 		return fmt.Errorf("%w: %v", ErrPermanent, err)
 	}
 
+	allowed, crawlDelay, err := w.robots.CanCrawl(ctx, task.URL)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrTransient, err)
+	}
+
+	if !allowed {
+		log.Printf("Robots.txt disallows %s", task.URL)
+		return nil
+	}
+
+	if crawlDelay > 0 {
+		log.Printf("Respecting crawl delay of %v for %s", crawlDelay, task.URL)
+		time.Sleep(crawlDelay)
+	}
+
 	domain := parsedURL.Hostname()
-	allowed, err := w.limiter.Allow(ctx, domain)
+	allowed, err = w.limiter.Allow(ctx, domain)
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrTransient, err)
 	}
 	if !allowed {
 		log.Printf("Rate limit exceeded for domain %s, pushing to cooldown", domain)
 
-		err = w.Queue.Push(ctx, task)
+		err = w.queue.Push(ctx, task)
 		if err != nil {
 			return fmt.Errorf("%w: failed to push to cooldown: %v", ErrTransient, err)
 		}

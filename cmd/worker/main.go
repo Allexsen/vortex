@@ -4,11 +4,13 @@ import (
 	"context"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"time"
 	"vortex/internal/cache"
 	"vortex/internal/cooldown"
 	"vortex/internal/ratelimit"
+	robotstxt "vortex/internal/robots"
 	"vortex/internal/worker"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -53,10 +55,19 @@ func main() {
 		log.Fatalf("[FATAL] Failed to connect to Redis after 3 attempts: %v", err)
 	}
 
-	limiter := ratelimit.NewRedisLimiter(rdb, "vortex:limit:", 10, time.Second)
+	limiter := ratelimit.NewRedisLimiter(rdb, "vortex:limit:", 1, time.Second)
 	queue := cooldown.NewRedisQueue(rdb, "vortex:cooldown:urls", 1*time.Second)
 
-	w := worker.NewWorker(conn, limiter, queue)
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	fetcher := robotstxt.NewFetcher(httpClient, "VortexBot/1.0")
+	robotsCache := cache.NewRedisCache(rdb, "vortex:robots:")
+	robots := robotstxt.NewEtiquetteEngine(
+		robotsCache,
+		fetcher,
+		"VortexBot",
+	)
+
+	w := worker.NewWorker(conn, limiter, queue, robots)
 	for range 50 {
 		go func() {
 			if err := w.Run(context.Background(), "vortex:frontier:pending"); err != nil {
