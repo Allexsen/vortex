@@ -80,6 +80,7 @@ func main() {
 		log.Fatalf("[FATAL] Failed to connect to Redis after 3 attempts: %v", err)
 	}
 
+	bf := cache.NewBloomFilter(rdb, "vortex:seen:urls")
 	for i := 1; i <= 100; i++ {
 		uuid := uuid.New().String()
 		task := models.CrawlTask{
@@ -96,7 +97,7 @@ func main() {
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // MUST CANCEL MANUALLY; DO NOT DEFER
-		isNew, err := cache.CheckAndSetURL(ctx, rdb, task.URL)
+		isNew, err := bf.CheckAndSet(ctx, task.URL)
 		cancel()
 		if err != nil {
 			log.Printf("[ERROR] Error checking URL in Bloom filter: %v", err)

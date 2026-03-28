@@ -6,8 +6,20 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func CheckAndSetURL(ctx context.Context, rdb *redis.Client, url string) (bool, error) {
-	resp, err := rdb.Do(ctx, "BF.ADD", "vortex:seen:urls", url).Bool()
+type BloomFilter struct {
+	rdb *redis.Client
+	key string
+}
+
+func NewBloomFilter(rdb *redis.Client, key string) *BloomFilter {
+	return &BloomFilter{
+		rdb: rdb,
+		key: key,
+	}
+}
+
+func (bf *BloomFilter) CheckAndSet(ctx context.Context, url string) (bool, error) {
+	resp, err := bf.rdb.Do(ctx, "BF.ADD", bf.key, url).Bool()
 	if err != nil {
 		return false, err
 	}
