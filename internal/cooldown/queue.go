@@ -10,6 +10,16 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+var (
+	popExpiredScript = redis.NewScript(`
+	local items = redis.call('ZRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+	if #items > 0 then
+		redis.call('ZREM', KEYS[1], unpack(items))
+	end
+	return items
+	`)
+)
+
 type Queue interface {
 	Push(context.Context, models.CrawlTask) error
 	PopExpired(context.Context) ([]models.CrawlTask, error)
@@ -43,38 +53,29 @@ func (q *RedisQueue) Push(ctx context.Context, task models.CrawlTask) error {
 }
 
 func (q *RedisQueue) PopExpired(ctx context.Context) ([]models.CrawlTask, error) {
-	now := float64(time.Now().Unix())
-	urls, err := q.client.ZRangeArgs(ctx, redis.ZRangeArgs{
-		Key:     q.key,
-		Start:   "-inf",
-		Stop:    strconv.FormatFloat(now, 'f', -1, 64),
-		ByScore: true,
-	}).Result()
+	now := strconv.FormatFloat(float64(time.Now().Unix()), 'f', -1, 64)
+	result, err := popExpiredScript.Run(ctx, q.client, []string{q.key}, now).Result()
 	if err != nil {
 		return nil, err
 	}
 
-	if len(urls) == 0 {
+	items, ok := result.([]interface{})
+	if !ok {
 		return nil, nil
 	}
 
 	var tasks []models.CrawlTask
-	for _, u := range urls {
+	for _, item := range items {
+		itemStr, ok := item.(string)
+		if !ok {
+			continue
+		}
+
 		var task models.CrawlTask
-		if err := json.Unmarshal([]byte(u), &task); err != nil {
+		if err := json.Unmarshal([]byte(itemStr), &task); err != nil {
 			continue
 		}
 		tasks = append(tasks, task)
-	}
-
-	members := make([]any, len(urls))
-	for i, u := range urls {
-		members[i] = u
-	}
-
-	_, err = q.client.ZRem(ctx, q.key, members...).Result()
-	if err != nil {
-		return nil, err
 	}
 
 	return tasks, nil
