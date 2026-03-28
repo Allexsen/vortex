@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 	"vortex/internal/cooldown"
+	"vortex/internal/keys"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -13,17 +14,20 @@ import (
 type Poller struct {
 	queue cooldown.Queue
 	conn  *amqp.Connection
+
+	pollerInterval time.Duration
 }
 
-func NewPoller(queue cooldown.Queue, conn *amqp.Connection) *Poller {
+func NewPoller(queue cooldown.Queue, conn *amqp.Connection, pollerInterval time.Duration) *Poller {
 	return &Poller{
-		queue: queue,
-		conn:  conn,
+		queue:          queue,
+		conn:           conn,
+		pollerInterval: pollerInterval,
 	}
 }
 
 func (p *Poller) Run(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(p.pollerInterval)
 	defer ticker.Stop()
 
 	ch, err := p.conn.Channel()
@@ -52,10 +56,10 @@ func (p *Poller) Run(ctx context.Context) {
 				}
 
 				err = ch.PublishWithContext(ctx,
-					"",                        // exchange
-					"vortex:frontier:pending", // routing key
-					false,                     // mandatory
-					false,                     // immediate
+					"",                 // exchange
+					keys.FrontierQueue, // routing key
+					false,              // mandatory
+					false,              // immediate
 					amqp.Publishing{
 						ContentType: "application/json",
 						Body:        taskJSON,

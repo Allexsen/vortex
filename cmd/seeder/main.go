@@ -10,13 +10,25 @@ import (
 	"strconv"
 	"time"
 	"vortex/internal/cache"
+	"vortex/internal/config"
+	"vortex/internal/keys"
 	"vortex/internal/models"
 
 	"github.com/google/uuid"
+	"github.com/joho/godotenv"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 func main() {
+	if err := godotenv.Load(); err != nil {
+		log.Printf("[WARN] No .env file found, using environment variables")
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("[FATAL] Failed to load configuration: %v", err)
+	}
+
 	const logDir = "logs"
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		log.Fatalf("[FATAL] Failed to create log directory: %v", err)
@@ -32,7 +44,7 @@ func main() {
 
 	var conn *amqp.Connection
 	for i := 1; i <= 3; i++ {
-		conn, err = amqp.Dial("amqp://guest:guest@localhost:5672/")
+		conn, err = amqp.Dial(cfg.RabbitMQ.URL)
 		if err == nil {
 			log.Println("Connected to RabbitMQ")
 			break
@@ -52,18 +64,18 @@ func main() {
 	defer ch.Close()
 
 	q, err := ch.QueueDeclare(
-		"vortex:frontier:pending", // name
-		true,                      // durable
-		false,                     // delete when unused
-		false,                     // exclusive
-		false,                     // no-wait
-		nil,                       // arguments
+		keys.FrontierQueue, // name
+		true,               // durable
+		false,              // delete when unused
+		false,              // exclusive
+		false,              // no-wait
+		nil,                // arguments
 	)
 	if err != nil {
 		log.Fatalf("[FATAL] Failed to declare a queue: %v", err)
 	}
 
-	rdb := cache.NewRedisClient()
+	rdb := cache.NewRedisClient(cfg.Redis)
 	for i := 1; i <= 3; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // MUST CANCEL MANUALLY; DO NOT DEFER
 		err = rdb.Ping(ctx).Err()
@@ -80,7 +92,7 @@ func main() {
 		log.Fatalf("[FATAL] Failed to connect to Redis after 3 attempts: %v", err)
 	}
 
-	bf := cache.NewBloomFilter(rdb, "vortex:seen:urls")
+	bf := cache.NewBloomFilter(rdb, keys.SeenBloomFilter)
 	for i := 1; i <= 100; i++ {
 		uuid := uuid.New().String()
 		task := models.CrawlTask{

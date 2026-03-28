@@ -21,14 +21,18 @@ type Worker struct {
 	limiter ratelimit.Limiter
 	queue   cooldown.Queue
 	robots  *robotstxt.EtiquetteEngine
+
+	taskTimeout time.Duration
 }
 
-func NewWorker(conn *amqp.Connection, limiter ratelimit.Limiter, queue cooldown.Queue, robots *robotstxt.EtiquetteEngine) *Worker {
+func NewWorker(conn *amqp.Connection, limiter ratelimit.Limiter, queue cooldown.Queue,
+	robots *robotstxt.EtiquetteEngine, taskTimeout time.Duration) *Worker {
 	return &Worker{
-		conn:    conn,
-		limiter: limiter,
-		queue:   queue,
-		robots:  robots,
+		conn:        conn,
+		limiter:     limiter,
+		queue:       queue,
+		robots:      robots,
+		taskTimeout: taskTimeout,
 	}
 }
 
@@ -73,7 +77,7 @@ func (w *Worker) Run(ctx context.Context, queueName string) error {
 	for msg := range msgs {
 		log.Printf("Received a message: %s", msg.Body)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second) // MUST CANCEL MANUALLY; DO NOT DEFER.
+		ctx, cancel := context.WithTimeout(context.Background(), w.taskTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER.
 		err := w.processTask(ctx, msg.Body)
 		cancel()
 
