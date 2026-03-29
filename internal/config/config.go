@@ -1,7 +1,7 @@
 package config
 
 import (
-	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"time"
@@ -13,6 +13,7 @@ type Config struct {
 	Worker   WorkerConfig
 	Robots   RobotsConfig
 	Crawler  CrawlerConfig
+	Fetcher  FetcherConfig
 }
 
 type RabbitMQConfig struct {
@@ -46,6 +47,11 @@ type CrawlerConfig struct {
 	PollerInterval  time.Duration
 }
 
+type FetcherConfig struct {
+	Timeout   time.Duration
+	UserAgent string
+}
+
 func Load() (*Config, error) {
 	return &Config{
 		RabbitMQ: RabbitMQConfig{
@@ -74,6 +80,10 @@ func Load() (*Config, error) {
 			CooldownTTL:     getDuration("CRAWLER_COOLDOWN_TTL", 1*time.Second),
 			PollerInterval:  getDuration("CRAWLER_POLLER_INTERVAL", 5*time.Second),
 		},
+		Fetcher: FetcherConfig{
+			Timeout:   getDuration("FETCHER_TIMEOUT", 30*time.Second),
+			UserAgent: getString("FETCHER_USER_AGENT", "VortexBot/1.0"),
+		},
 	}, nil
 }
 
@@ -85,7 +95,7 @@ func getDuration(key string, fallback time.Duration) time.Duration {
 
 	dur, err := time.ParseDuration(val)
 	if err != nil {
-		log.Printf("Invalid duration for %s: %v, using fallback %s", key, err, fallback)
+		slog.Error("Invalid duration, using fallback", "key", key, "error", err, "fallback", fallback)
 		return fallback
 	}
 	return dur
@@ -99,7 +109,7 @@ func getInt(key string, fallback int) int {
 
 	i, err := strconv.Atoi(val)
 	if err != nil {
-		log.Printf("Invalid integer for %s: %v, using fallback %d", key, err, fallback)
+		slog.Error("Invalid integer, using fallback", "key", key, "error", err, "fallback", fallback)
 		return fallback
 	}
 	return i

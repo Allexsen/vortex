@@ -3,7 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"time"
 	"vortex/internal/cooldown"
 	"vortex/internal/keys"
@@ -32,26 +32,27 @@ func (p *Poller) Run(ctx context.Context) {
 
 	ch, err := p.conn.Channel()
 	if err != nil {
-		log.Fatalf("[FATAL] Failed to open channel: %v", err)
+		slog.Error("Failed to open channel", "error", err)
+		return
 	}
 	defer ch.Close()
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("Poller shutting down...")
+			slog.Info("Poller shutting down...")
 			return
 		case <-ticker.C:
 			tasks, err := p.queue.PopExpired(ctx)
 			if err != nil {
-				log.Printf("[ERROR] Failed to pop expired tasks: %v", err)
+				slog.Error("Failed to pop expired tasks", "error", err)
 				continue
 			}
 
 			for _, task := range tasks {
 				taskJSON, err := json.Marshal(task)
 				if err != nil {
-					log.Printf("[ERROR] Failed to marshal task: %v", err)
+					slog.Error("Failed to marshal task", "task_id", task.TraceID, "error", err)
 					continue
 				}
 
@@ -66,7 +67,7 @@ func (p *Poller) Run(ctx context.Context) {
 					},
 				)
 				if err != nil {
-					log.Printf("[ERROR] Failed to publish task back to frontier: %v", err)
+					slog.Error("Failed to publish task back to frontier", "task_id", task.TraceID, "error", err)
 					continue
 				}
 			}

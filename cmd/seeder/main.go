@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"io"
 	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 	"vortex/internal/cache"
 	"vortex/internal/config"
@@ -20,46 +20,58 @@ import (
 )
 
 func main() {
-	if err := godotenv.Load(); err != nil {
-		log.Printf("[WARN] No .env file found, using environment variables")
-	}
-
-	cfg, err := config.Load()
-	if err != nil {
-		log.Fatalf("[FATAL] Failed to load configuration: %v", err)
-	}
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	slog.SetDefault(logger)
 
 	const logDir = "logs"
 	if err := os.MkdirAll(logDir, 0755); err != nil {
-		log.Fatalf("[FATAL] Failed to create log directory: %v", err)
+		logger.Error("Failed to create log directory", "error", err)
+		os.Exit(1)
 	}
 
 	logPath := filepath.Join(logDir, "vortex.log")
 	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0666)
 	if err != nil {
-		log.Fatalf("[FATAL] Failed to open log file: %v", err)
+		logger.Error("Failed to open log file", "error", err)
+		os.Exit(1)
 	}
 	defer file.Close()
-	log.SetOutput(io.MultiWriter(os.Stdout, file))
+
+	multiWriter := io.MultiWriter(os.Stdout, file)
+	log.SetOutput(multiWriter)
+	logger = slog.New(slog.NewJSONHandler(multiWriter, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	slog.SetDefault(logger)
+
+	if err := godotenv.Load(); err != nil {
+		logger.Warn("No .env file found, using environment variables")
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		logger.Error("Failed to load configuration", "error", err)
+		os.Exit(1)
+	}
 
 	var conn *amqp.Connection
 	for i := 1; i <= 3; i++ {
 		conn, err = amqp.Dial(cfg.RabbitMQ.URL)
 		if err == nil {
-			log.Println("Connected to RabbitMQ")
+			logger.Info("Connected to RabbitMQ")
 			break
 		}
-		log.Printf("[WARN] RabbitMQ not ready (attempt %d/3): %v. Retrying in 5s...", i, err)
+		logger.Warn("RabbitMQ not ready.. attempting to reconnect in 5s", "attempt", i, "error", err)
 		time.Sleep(5 * time.Second)
 	}
 	if err != nil {
-		log.Fatalf("[FATAL] Failed to connect to RabbitMQ after 3 attempts: %v", err)
+		logger.Error("Failed to connect to RabbitMQ after 3 attempts", "error", err)
+		os.Exit(1)
 	}
 	defer conn.Close()
 
 	ch, err := conn.Channel()
 	if err != nil {
-		log.Fatalf("[FATAL] Failed to open a channel: %v", err)
+		logger.Error("Failed to open a channel", "error", err)
+		os.Exit(1)
 	}
 	defer ch.Close()
 
@@ -72,7 +84,8 @@ func main() {
 		nil,                // arguments
 	)
 	if err != nil {
-		log.Fatalf("[FATAL] Failed to declare a queue: %v", err)
+		logger.Error("Failed to declare a queue", "error", err)
+		os.Exit(1)
 	}
 
 	rdb := cache.NewRedisClient(cfg.Redis)
@@ -81,30 +94,32 @@ func main() {
 		err = rdb.Ping(ctx).Err()
 		cancel()
 		if err == nil {
-			log.Println("Connected to Redis")
+			logger.Info("Connected to Redis")
 			break
 		}
-		log.Printf("[WARN] Redis not ready (attempt %d/3): %v. Retrying in 5s...", i, err)
+		logger.Warn("Redis not ready.. attempting to reconnect in 5s", "attempt", i, "error", err)
 		time.Sleep(5 * time.Second)
 	}
 
 	if err != nil {
-		log.Fatalf("[FATAL] Failed to connect to Redis after 3 attempts: %v", err)
+		logger.Error("Failed to connect to Redis after 3 attempts", "error", err)
+		os.Exit(1)
 	}
 
 	bf := cache.NewBloomFilter(rdb, keys.SeenBloomFilter)
-	for i := 1; i <= 100; i++ {
+	for i := 1; i <= 1; i++ {
 		uuid := uuid.New().String()
 		task := models.CrawlTask{
-			TraceID:    uuid,
-			URL:        "https://dummy.url/" + strconv.Itoa(i),
+			TraceID: uuid,
+			// URL:        "https://dummy.url/" + strconv.Itoa(i),
+			URL:        "https://allexsen.github.io/portfolio/",
 			Attempt:    0,
 			EnqueuedAt: time.Now(),
 		}
 
 		taskJSON, err := json.Marshal(task)
 		if err != nil {
-			log.Printf("[ERROR] Failed to marshal task: %v", err)
+			logger.Error("Failed to marshal task", "task_id", task.TraceID, "error", err)
 			continue
 		}
 
@@ -112,10 +127,10 @@ func main() {
 		isNew, err := bf.CheckAndSet(ctx, task.URL)
 		cancel()
 		if err != nil {
-			log.Printf("[ERROR] Error checking URL in Bloom filter: %v", err)
+			logger.Error("Error checking URL in Bloom filter", "task_id", task.TraceID, "url", task.URL, "error", err)
 			continue
 		} else if !isNew {
-			log.Printf("URL already seen, skipping: %s", taskJSON)
+			logger.Info("URL already seen, skipping", "task_id", task.TraceID, "url", task.URL)
 			continue
 		}
 
@@ -133,9 +148,9 @@ func main() {
 		cancel()
 
 		if err != nil {
-			log.Printf("[ERROR] Failed to publish task: %v", err)
+			logger.Error("Failed to publish task", "task_id", task.TraceID, "error", err)
 			continue
 		}
-		log.Printf(" [x] Sent %s", taskJSON)
+		logger.Info("Task published", "task_id", task.TraceID, "url", task.URL, "time", task.EnqueuedAt.Format(time.RFC3339))
 	}
 }
