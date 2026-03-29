@@ -4,12 +4,15 @@ import (
 	"context"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 	"vortex/internal/cache"
 	"vortex/internal/config"
 	"vortex/internal/cooldown"
+	httpFetcher "vortex/internal/fetcher"
 	"vortex/internal/keys"
 	"vortex/internal/ratelimit"
 	robotstxt "vortex/internal/robots"
@@ -20,34 +23,51 @@ import (
 )
 
 func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	slog.SetDefault(logger)
+
+	const logDir = "logs"
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		logger.Error("Failed to create log directory", "error", err)
+		os.Exit(1)
+	}
+
+	logPath := filepath.Join(logDir, "vortex.log")
+	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0666)
+	if err != nil {
+		logger.Error("Failed to open log file", "error", err)
+		os.Exit(1)
+	}
+	defer file.Close()
+
+	multiWriter := io.MultiWriter(os.Stdout, file)
+	log.SetOutput(multiWriter)
+	logger = slog.New(slog.NewJSONHandler(multiWriter, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	slog.SetDefault(logger)
+
 	if err := godotenv.Load(); err != nil {
-		log.Printf("[WARN] No .env file found, using environment variables")
+		logger.Warn("No .env file found, using environment variables")
 	}
 
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("[FATAL] Failed to load configuration: %v", err)
+		logger.Error("Failed to load configuration", "error", err)
+		os.Exit(1)
 	}
-
-	file, err := os.OpenFile("vortex.log", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Fatalf("[FATAL] Failed to open log file: %v", err)
-	}
-	defer file.Close()
-	log.SetOutput(io.MultiWriter(os.Stdout, file))
 
 	var conn *amqp.Connection
 	for i := 1; i <= 3; i++ {
 		conn, err = amqp.Dial(cfg.RabbitMQ.URL)
 		if err == nil {
-			log.Println("Connected to RabbitMQ")
+			logger.Info("Connected to RabbitMQ")
 			break
 		}
-		log.Printf("[WARN] RabbitMQ not ready (attempt %d/3): %v. Retrying in 5s...", i, err)
+		logger.Warn("RabbitMQ not ready.. attempting to reconnect in 5s", "attempt", i, "error", err)
 		time.Sleep(5 * time.Second)
 	}
 	if err != nil {
-		log.Fatalf("[FATAL] Failed to connect to RabbitMQ after 3 attempts: %v", err)
+		logger.Error("Failed to connect to RabbitMQ after 3 attempts", "error", err)
+		os.Exit(1)
 	}
 	defer conn.Close()
 
@@ -57,33 +77,36 @@ func main() {
 		err = rdb.Ping(ctx).Err()
 		cancel()
 		if err == nil {
-			log.Println("Connected to Redis")
+			logger.Info("Connected to Redis")
 			break
 		}
-		log.Printf("[WARN] Redis not ready (attempt %d/3): %v. Retrying in 5s...", i, err)
+		logger.Warn("Redis not ready.. attempting to reconnect in 5s", "attempt", i, "error", err)
 		time.Sleep(5 * time.Second)
 	}
 	if err != nil {
-		log.Fatalf("[FATAL] Failed to connect to Redis after 3 attempts: %v", err)
+		logger.Error("Failed to connect to Redis after 3 attempts", "error", err)
+		os.Exit(1)
 	}
 
 	limiter := ratelimit.NewRedisLimiter(rdb, keys.RateLimitPrefix, cfg.Crawler.RateLimit, cfg.Crawler.RateLimitWindow)
-	queue := cooldown.NewRedisQueue(rdb, keys.CooldownQueue, cfg.Crawler.CooldownTTL)
+	queue := cooldown.NewRedisQueue(rdb, keys.CooldownQueue)
 
 	httpClient := &http.Client{Timeout: cfg.Robots.HTTPTimeout}
-	fetcher := robotstxt.NewFetcher(httpClient, cfg.Robots.HTTPUserAgent)
+	robotsFetcher := robotstxt.NewFetcher(httpClient, cfg.Robots.HTTPUserAgent)
 	robotsCache := cache.NewRedisCache(rdb, keys.RobotsCachePrefix)
 	robots := robotstxt.NewEtiquetteEngine(
 		robotsCache,
-		fetcher,
+		robotsFetcher,
 		cfg.Robots.UserAgent,
 	)
 
-	w := worker.NewWorker(conn, limiter, queue, robots, cfg.Worker.TaskTimeout)
+	fetcher := httpFetcher.NewFetcher(cfg.Fetcher.Timeout, cfg.Fetcher.UserAgent)
+
+	w := worker.NewWorker(conn, limiter, queue, robots, fetcher, cfg.Worker.TaskTimeout, cfg.Crawler.CooldownTTL)
 	for range cfg.Worker.Count {
 		go func() {
 			if err := w.Run(context.Background(), keys.FrontierQueue); err != nil {
-				log.Printf("[ERROR] Worker encountered an error: %v", err)
+				logger.Error("Worker encountered an error", "error", err)
 			}
 		}()
 	}
@@ -93,6 +116,6 @@ func main() {
 
 	var forever chan struct{}
 
-	log.Printf(" [*] Waiting for messages. To exit press CTRL+C")
+	logger.Info("Waiting for messages. To exit press CTRL+C")
 	<-forever
 }

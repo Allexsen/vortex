@@ -21,31 +21,29 @@ var (
 )
 
 type Queue interface {
-	Push(context.Context, models.CrawlTask) error
+	Push(context.Context, models.CrawlTask, time.Duration) error
 	PopExpired(context.Context) ([]models.CrawlTask, error)
 }
 
 type RedisQueue struct {
-	client   *redis.Client
-	key      string
-	duration time.Duration
+	client *redis.Client
+	key    string
 }
 
-func NewRedisQueue(client *redis.Client, key string, duration time.Duration) *RedisQueue {
+func NewRedisQueue(client *redis.Client, key string) *RedisQueue {
 	return &RedisQueue{
-		client:   client,
-		key:      key,
-		duration: duration,
+		client: client,
+		key:    key,
 	}
 }
 
-func (q *RedisQueue) Push(ctx context.Context, task models.CrawlTask) error {
+func (q *RedisQueue) Push(ctx context.Context, task models.CrawlTask, duration time.Duration) error {
 	taskJSON, err := json.Marshal(task)
 	if err != nil {
 		return err
 	}
 
-	score := float64(time.Now().Add(q.duration).Unix()) // cooldown duration
+	score := float64(time.Now().Add(duration).Unix()) // cooldown duration
 	return q.client.ZAdd(ctx, q.key, redis.Z{
 		Score:  score,
 		Member: taskJSON,
