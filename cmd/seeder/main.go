@@ -108,13 +108,13 @@ func main() {
 
 	bf := cache.NewBloomFilter(rdb, keys.SeenBloomFilter)
 	for i := 1; i <= 1; i++ {
-		uuid := uuid.New().String()
 		task := models.CrawlTask{
-			TraceID: uuid,
+			TraceID: uuid.New().String(),
 			// URL:        "https://dummy.url/" + strconv.Itoa(i),
-			URL:        "https://allexsen.github.io/portfolio/",
+			URL:        "https://go.dev",
 			Attempt:    0,
 			EnqueuedAt: time.Now(),
+			Depth:      0,
 		}
 
 		taskJSON, err := json.Marshal(task)
