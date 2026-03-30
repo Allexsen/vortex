@@ -3,8 +3,16 @@ package parser
 import (
 	"bytes"
 	"net/url"
+	"regexp"
+	"strings"
 
 	"github.com/PuerkitoBio/goquery"
+)
+
+var (
+	collapseWS = regexp.MustCompile(`\s+`)
+
+	excludeTags = []string{"script", "style", "noscript", "nav", "footer", "header", "aside", "form", "input", "button", "select", "textarea", "iframe", "canvas", "svg"}
 )
 
 func ExtractURLs(html []byte, baseURL string) ([]string, error) {
@@ -46,4 +54,21 @@ func SanitizeURL(rawURL string) (string, bool) {
 
 	parsed.Fragment = ""
 	return parsed.String(), true
+}
+
+func ExtractText(html []byte) (string, error) {
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(html))
+	if err != nil {
+		return "", err
+	}
+
+	for _, tag := range excludeTags {
+		doc.Find(tag).Remove()
+	}
+
+	content := doc.Text()
+	content = collapseWS.ReplaceAllString(content, " ")
+	content = strings.TrimSpace(content)
+
+	return content, nil
 }

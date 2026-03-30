@@ -94,10 +94,13 @@ func (w *Worker) Run(ctx context.Context, queueName string) error {
 		slog.Info("Received a message", "body", msg.Body)
 
 		ctx, cancel := context.WithTimeout(context.Background(), w.taskTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER.
-		newTasks, err := w.processTask(ctx, msg.Body)
+		taskResult, err := w.processTask(ctx, msg.Body)
 		cancel()
 
 		if err == nil {
+			newTasks := taskResult.CrawlTasks
+			slog.Info("Task completed successfully", "task_id", taskResult.TraceID, "new_tasks", len(newTasks))
+
 			for _, t := range newTasks {
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // MUST CANCEL MANUALLY; DO NOT DEFER.
 				ok, err := w.bloomFilter.CheckAndSet(ctx, t.URL)
@@ -153,11 +156,17 @@ func (w *Worker) Run(ctx context.Context, queueName string) error {
 	return nil
 }
 
-func (w *Worker) processTask(ctx context.Context, body []byte) ([]models.CrawlTask, error) {
+func (w *Worker) processTask(ctx context.Context, body []byte) (*taskResult, error) {
 	var task models.CrawlTask
 	err := json.Unmarshal(body, &task)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrPermanent, err)
+	}
+
+	taskResult := &taskResult{
+		TraceID:    task.TraceID,
+		CrawlTasks: []models.CrawlTask{},
+		Content:    "",
 	}
 
 	parsedURL, err := url.Parse(task.URL)
@@ -172,7 +181,7 @@ func (w *Worker) processTask(ctx context.Context, body []byte) ([]models.CrawlTa
 
 	if !allowed {
 		slog.Info("Robots.txt disallows URL", "task_id", task.TraceID, "url", task.URL)
-		return nil, nil
+		return taskResult, nil
 	}
 
 	if crawlDelay > 0 {
@@ -193,7 +202,7 @@ func (w *Worker) processTask(ctx context.Context, body []byte) ([]models.CrawlTa
 			return nil, fmt.Errorf("%w: failed to push to cooldown: %v", ErrTransient, err)
 		}
 
-		return nil, nil
+		return taskResult, nil
 	}
 
 	page, err := w.fetcher.Fetch(ctx, task.URL)
@@ -205,12 +214,12 @@ func (w *Worker) processTask(ctx context.Context, body []byte) ([]models.CrawlTa
 			if err != nil {
 				return nil, fmt.Errorf("%w: failed to push to cooldown: %v", ErrTransient, err)
 			}
-			return nil, nil
+			return taskResult, nil
 		} else {
 			var reqErr *httpFetcher.RequestError
 			if errors.As(err, &reqErr) {
 				slog.Warn("Request error for URL", "task_id", task.TraceID, "url", task.URL, "error", err)
-				return nil, nil // Don't retry on 4xx/5xx errors; just drop the task.
+				return taskResult, nil // Don't retry on 4xx/5xx errors; just drop the task.
 			}
 		}
 
@@ -218,9 +227,17 @@ func (w *Worker) processTask(ctx context.Context, body []byte) ([]models.CrawlTa
 	}
 	slog.Info("Successfully fetched URL", "task_id", task.TraceID, "url", task.URL, "size", len(page))
 
+	taskResult.Content, err = parser.ExtractText(page)
+	if err != nil {
+		slog.Warn("Failed to extract text content", "task_id", task.TraceID, "url", task.URL, "error", err)
+		taskResult.Content = ""
+	} else {
+		slog.Info("Extracted text content", "task_id", task.TraceID, "url", task.URL, "content_length", len(taskResult.Content))
+	}
+
 	if task.Depth >= w.maxDepth {
 		slog.Info("Max crawl depth reached, not extracting URLs", "task_id", task.TraceID, "url", task.URL, "depth", task.Depth)
-		return nil, nil
+		return taskResult, nil
 	}
 
 	rawURLs, err := parser.ExtractURLs(page, task.URL)
@@ -240,12 +257,13 @@ func (w *Worker) processTask(ctx context.Context, body []byte) ([]models.CrawlTa
 		urls = append(urls, sanitized)
 	}
 
-	var newTasks []models.CrawlTask
 	seen := make(map[string]struct{})
 	for _, u := range urls {
 		if _, exists := seen[u]; exists {
 			continue
 		}
+
+		seen[u] = struct{}{}
 
 		newTask := models.CrawlTask{
 			TraceID:    uuid.New().String(),
@@ -255,9 +273,8 @@ func (w *Worker) processTask(ctx context.Context, body []byte) ([]models.CrawlTa
 			Depth:      task.Depth + 1,
 		}
 
-		newTasks = append(newTasks, newTask)
-		seen[u] = struct{}{}
+		taskResult.CrawlTasks = append(taskResult.CrawlTasks, newTask)
 	}
 
-	return newTasks, nil
+	return taskResult, nil
 }
