@@ -7,4 +7,5 @@ type CrawlTask struct {
 	URL        string    `json:"url"`
 	Attempt    int       `json:"attempt_count"`
 	EnqueuedAt time.Time `json:"enqueued_at"`
+	Depth      int       `json:"depth"`
 }

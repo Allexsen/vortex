@@ -101,8 +101,9 @@ func main() {
 	)
 
 	fetcher := httpFetcher.NewFetcher(cfg.Fetcher.Timeout, cfg.Fetcher.UserAgent)
+	bloomFilter := cache.NewBloomFilter(rdb, keys.SeenBloomFilter)
 
-	w := worker.NewWorker(conn, limiter, queue, robots, fetcher, cfg.Worker.TaskTimeout, cfg.Crawler.CooldownTTL)
+	w := worker.NewWorker(conn, limiter, queue, robots, fetcher, bloomFilter, cfg.Crawler.MaxDepth, cfg.Crawler.PublishTimeout, cfg.Worker.TaskTimeout, cfg.Crawler.CooldownTTL)
 	for range cfg.Worker.Count {
 		go func() {
 			if err := w.Run(context.Background(), keys.FrontierQueue); err != nil {
