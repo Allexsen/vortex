@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"log/slog"
@@ -107,7 +108,7 @@ func main() {
 
 	rdb := cache.NewRedisClient(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, cfg.Redis.PoolSize)
 	for i := 1; i <= 3; i++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), cfg.Worker.RedisTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER.
 		err = rdb.Ping(ctx).Err()
 		cancel()
 		if err == nil {
@@ -139,12 +140,14 @@ func main() {
 	fetcher := httpFetcher.NewFetcher(cfg.Fetcher.Timeout, cfg.Fetcher.UserAgent)
 	bloomFilter := cache.NewBloomFilter(rdb, keys.SeenBloomFilter)
 
-	w := worker.NewWorker(conn, limiter, queue, robots, fetcher, bloomFilter,
-		cfg.Crawler.MaxDepth, cfg.Crawler.PublishTimeout, cfg.Worker.TaskTimeout, cfg.Crawler.CooldownTTL,
-		keys.FrontierQueue, keys.ProcessingQueue,
-	)
-	for range cfg.Worker.Count {
+	for i := 1; i <= cfg.Worker.Count; i++ {
 		go func() {
+			w := worker.NewWorker(fmt.Sprintf("worker-%d", i),
+				conn, limiter, queue, robots, fetcher, bloomFilter,
+				cfg.Crawler.MaxDepth, cfg.Worker.MaxRetries,
+				cfg.Crawler.PublishTimeout, cfg.Worker.RedisTimeout, cfg.Worker.TaskTimeout, cfg.Crawler.CooldownTTL,
+				keys.FrontierQueue, keys.ProcessingQueue,
+			)
 			if err := w.Run(context.Background()); err != nil {
 				logger.Error("Worker encountered an error", "error", err)
 			}
