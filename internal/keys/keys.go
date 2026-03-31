@@ -6,4 +6,5 @@ const (
 	CooldownQueue     = "vortex:cooldown:urls"
 	RobotsCachePrefix = "vortex:robots:"
 	RateLimitPrefix   = "vortex:limit:"
+	ProcessingQueue   = "vortex:processing:pending"
 )

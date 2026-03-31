@@ -71,6 +71,40 @@ func main() {
 	}
 	defer conn.Close()
 
+	ch, err := conn.Channel()
+	if err != nil {
+		logger.Error("Failed to open amqp channel", "error", err)
+		os.Exit(1)
+	}
+	defer ch.Close()
+
+	_, err = ch.QueueDeclare(
+		keys.FrontierQueue, // name
+		true,               // durable
+		false,              // delete when unused
+		false,              // exclusive
+		false,              // no-wait
+		nil,                // arguments
+	)
+	if err != nil {
+		logger.Error("Failed to declare frontier queue", "error", err)
+		os.Exit(1)
+	}
+
+	_, err = ch.QueueDeclare(
+		keys.ProcessingQueue,
+		true,  // durable
+		false, // delete when unused
+		false, // exclusive
+		false, // no-wait
+		nil,   // arguments
+	)
+
+	if err != nil {
+		logger.Error("Failed to declare processing queue", "error", err)
+		os.Exit(1)
+	}
+
 	rdb := cache.NewRedisClient(cfg.Redis)
 	for i := 1; i <= 3; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -103,10 +137,13 @@ func main() {
 	fetcher := httpFetcher.NewFetcher(cfg.Fetcher.Timeout, cfg.Fetcher.UserAgent)
 	bloomFilter := cache.NewBloomFilter(rdb, keys.SeenBloomFilter)
 
-	w := worker.NewWorker(conn, limiter, queue, robots, fetcher, bloomFilter, cfg.Crawler.MaxDepth, cfg.Crawler.PublishTimeout, cfg.Worker.TaskTimeout, cfg.Crawler.CooldownTTL)
+	w := worker.NewWorker(conn, limiter, queue, robots, fetcher, bloomFilter,
+		cfg.Crawler.MaxDepth, cfg.Crawler.PublishTimeout, cfg.Worker.TaskTimeout, cfg.Crawler.CooldownTTL,
+		keys.FrontierQueue, keys.ProcessingQueue,
+	)
 	for range cfg.Worker.Count {
 		go func() {
-			if err := w.Run(context.Background(), keys.FrontierQueue); err != nil {
+			if err := w.Run(context.Background()); err != nil {
 				logger.Error("Worker encountered an error", "error", err)
 			}
 		}()

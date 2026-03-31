@@ -11,7 +11,6 @@ import (
 	"vortex/internal/cache"
 	"vortex/internal/cooldown"
 	httpFetcher "vortex/internal/fetcher"
-	"vortex/internal/keys"
 	"vortex/internal/models"
 	"vortex/internal/parser"
 	"vortex/internal/ratelimit"
@@ -33,26 +32,32 @@ type Worker struct {
 	publishTimeout time.Duration
 	taskTimeout    time.Duration
 	cooldownTTL    time.Duration
+
+	frontierQueue   string
+	processingQueue string
 }
 
 func NewWorker(conn *amqp.Connection, limiter ratelimit.Limiter, queue cooldown.Queue,
 	robots *robotstxt.EtiquetteEngine, fetcher *httpFetcher.Fetcher, bloomFilter *cache.BloomFilter,
-	maxDepth int, publishTimeout time.Duration, taskTimeout time.Duration, cooldownTTL time.Duration) *Worker {
+	maxDepth int, publishTimeout time.Duration, taskTimeout time.Duration, cooldownTTL time.Duration,
+	frontierQueue string, processingQueue string) *Worker {
 	return &Worker{
-		conn:           conn,
-		limiter:        limiter,
-		queue:          queue,
-		robots:         robots,
-		fetcher:        fetcher,
-		bloomFilter:    bloomFilter,
-		maxDepth:       maxDepth,
-		publishTimeout: publishTimeout,
-		taskTimeout:    taskTimeout,
-		cooldownTTL:    cooldownTTL,
+		conn:            conn,
+		limiter:         limiter,
+		queue:           queue,
+		robots:          robots,
+		fetcher:         fetcher,
+		bloomFilter:     bloomFilter,
+		maxDepth:        maxDepth,
+		publishTimeout:  publishTimeout,
+		taskTimeout:     taskTimeout,
+		cooldownTTL:     cooldownTTL,
+		frontierQueue:   frontierQueue,
+		processingQueue: processingQueue,
 	}
 }
 
-func (w *Worker) Run(ctx context.Context, queueName string) error {
+func (w *Worker) Run(runCtx context.Context) error {
 	ch, err := w.conn.Channel()
 	if err != nil {
 		return fmt.Errorf("failed to open channel: %w", err)
@@ -64,26 +69,14 @@ func (w *Worker) Run(ctx context.Context, queueName string) error {
 		return fmt.Errorf("failed to set QoS: %w", err)
 	}
 
-	q, err := ch.QueueDeclare(
-		queueName, // name
-		true,      // durable
-		false,     // delete when unused
-		false,     // exclusive
-		false,     // no-wait
-		nil,       // arguments
-	)
-	if err != nil {
-		return fmt.Errorf("failed to declare queue: %w", err)
-	}
-
 	msgs, err := ch.Consume(
-		q.Name, // queue
-		"",     // consumer
-		false,  // auto-ack
-		false,  // exclusive
-		false,  // no-local
-		false,  // no-wait
-		nil,    // args
+		w.frontierQueue, // queue
+		"",              // consumer
+		false,           // auto-ack
+		false,           // exclusive
+		false,           // no-local
+		false,           // no-wait
+		nil,             // args
 	)
 	if err != nil {
 		return fmt.Errorf("failed to start consuming: %w", err)
@@ -93,7 +86,7 @@ func (w *Worker) Run(ctx context.Context, queueName string) error {
 	for msg := range msgs {
 		slog.Info("Received a message", "body", msg.Body)
 
-		ctx, cancel := context.WithTimeout(context.Background(), w.taskTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER.
+		ctx, cancel := context.WithTimeout(runCtx, w.taskTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER.
 		taskResult, err := w.processTask(ctx, msg.Body)
 		cancel()
 
@@ -101,8 +94,17 @@ func (w *Worker) Run(ctx context.Context, queueName string) error {
 			newTasks := taskResult.CrawlTasks
 			slog.Info("Task completed successfully", "task_id", taskResult.TraceID, "new_tasks", len(newTasks))
 
+			if len(taskResult.Content) > 0 {
+				ctx, cancel := context.WithTimeout(runCtx, w.publishTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER.
+				err = w.publishCrawlResult(ctx, ch, taskResult)
+				cancel()
+				if err != nil {
+					slog.Error("Failed to publish crawl result", "task_id", taskResult.TraceID, "error", err)
+				}
+			}
+
 			for _, t := range newTasks {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // MUST CANCEL MANUALLY; DO NOT DEFER.
+				ctx, cancel := context.WithTimeout(runCtx, 5*time.Second) // MUST CANCEL MANUALLY; DO NOT DEFER.
 				ok, err := w.bloomFilter.CheckAndSet(ctx, t.URL)
 				cancel()
 				if err != nil {
@@ -121,12 +123,12 @@ func (w *Worker) Run(ctx context.Context, queueName string) error {
 					continue
 				}
 
-				ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second) // MUST CANCEL MANUALLY; DO NOT DEFER.
+				ctx, cancel = context.WithTimeout(runCtx, w.publishTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER.
 				err = ch.PublishWithContext(ctx,
-					"",                 // exchange
-					keys.FrontierQueue, // routing key
-					false,              // mandatory
-					false,              // immediate
+					"",              // exchange
+					w.frontierQueue, // routing key
+					false,           // mandatory
+					false,           // immediate
 					amqp.Publishing{
 						ContentType: "application/json",
 						Body:        taskJSON,
@@ -165,6 +167,7 @@ func (w *Worker) processTask(ctx context.Context, body []byte) (*taskResult, err
 
 	taskResult := &taskResult{
 		TraceID:    task.TraceID,
+		TaskURL:    task.URL,
 		CrawlTasks: []models.CrawlTask{},
 		Content:    "",
 	}
@@ -277,4 +280,35 @@ func (w *Worker) processTask(ctx context.Context, body []byte) (*taskResult, err
 	}
 
 	return taskResult, nil
+}
+
+func (w *Worker) publishCrawlResult(ctx context.Context, ch *amqp.Channel, taskResult *taskResult) error {
+	crawlResult := models.CrawlResult{
+		TraceID:   taskResult.TraceID,
+		URL:       taskResult.TaskURL,
+		Content:   taskResult.Content,
+		CreatedAt: time.Now(),
+	}
+
+	resultJSON, err := json.Marshal(crawlResult)
+	if err != nil {
+		return fmt.Errorf("failed to marshal crawl result: %w", err)
+	}
+
+	err = ch.PublishWithContext(
+		ctx,
+		"",
+		w.processingQueue,
+		false,
+		false,
+		amqp.Publishing{
+			ContentType: "application/json",
+			Body:        resultJSON,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to publish crawl result: %w", err)
+	}
+
+	return nil
 }
