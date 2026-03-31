@@ -3,7 +3,6 @@ package cache
 import (
 	"context"
 	"time"
-	"vortex/internal/config"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -20,12 +19,12 @@ func NewRedisCache(client *redis.Client, prefix string) *RedisCache {
 	}
 }
 
-func NewRedisClient(cfg config.RedisConfig) *redis.Client {
+func NewRedisClient(addr, password string, db, poolSize int) *redis.Client {
 	return redis.NewClient(&redis.Options{
-		Addr:     cfg.Addr,     // Redis server address
-		Password: cfg.Password, // no password set
-		DB:       cfg.DB,       // use default DB
-		PoolSize: cfg.PoolSize, // set pool size
+		Addr:     addr,     // Redis server address
+		Password: password, // no password set
+		DB:       db,       // use default DB
+		PoolSize: poolSize, // set pool size
 	})
 }
 

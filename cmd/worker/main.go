@@ -105,7 +105,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	rdb := cache.NewRedisClient(cfg.Redis)
+	rdb := cache.NewRedisClient(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, cfg.Redis.PoolSize)
 	for i := 1; i <= 3; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		err = rdb.Ping(ctx).Err()
