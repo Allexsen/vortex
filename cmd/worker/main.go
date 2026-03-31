@@ -132,6 +132,8 @@ func main() {
 		robotsCache,
 		robotsFetcher,
 		cfg.Robots.UserAgent,
+		cfg.Robots.CacheTTL,
+		cfg.Robots.DeniedCacheTTL,
 	)
 
 	fetcher := httpFetcher.NewFetcher(cfg.Fetcher.Timeout, cfg.Fetcher.UserAgent)

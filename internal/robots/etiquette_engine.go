@@ -17,13 +17,18 @@ type EtiquetteEngine struct {
 	cache     RulesCache
 	fetcher   *Fetcher
 	userAgent string
+
+	cacheTTL       time.Duration
+	deniedCacheTTL time.Duration
 }
 
-func NewEtiquetteEngine(cache RulesCache, fetcher *Fetcher, userAgent string) *EtiquetteEngine {
+func NewEtiquetteEngine(cache RulesCache, fetcher *Fetcher, userAgent string, cacheTTL, deniedCacheTTL time.Duration) *EtiquetteEngine {
 	return &EtiquetteEngine{
-		cache:     cache,
-		fetcher:   fetcher,
-		userAgent: userAgent,
+		cache:          cache,
+		fetcher:        fetcher,
+		userAgent:      userAgent,
+		cacheTTL:       cacheTTL,
+		deniedCacheTTL: deniedCacheTTL,
 	}
 }
 
@@ -56,7 +61,7 @@ func (e *EtiquetteEngine) CanCrawl(ctx context.Context, rawURL string) (bool, ti
 		if err != nil {
 			if errors.Is(err, ErrAccessDenied) {
 				slog.Info("Access denied", "domain", domain, "error", err)
-				e.setCache(ctx, domain, deniedMarker, 2*time.Hour) // Cache denial for 2 hours
+				e.setCache(ctx, domain, deniedMarker, e.deniedCacheTTL)
 				return false, 0, nil
 			}
 
@@ -66,10 +71,10 @@ func (e *EtiquetteEngine) CanCrawl(ctx context.Context, rawURL string) (bool, ti
 
 		if data == nil {
 			slog.Info("No robots.txt found", "domain", domain)
-			e.setCache(ctx, domain, []byte{}, 24*time.Hour) // Cache empty result
+			e.setCache(ctx, domain, []byte{}, e.cacheTTL) // Cache empty result
 			return true, 0, nil
 		} else {
-			e.setCache(ctx, domain, data, 24*time.Hour) // Cache valid robots.txt for 24 hours
+			e.setCache(ctx, domain, data, e.cacheTTL) // Cache valid robots.txt for the specified duration
 		}
 	}
 
