@@ -88,9 +88,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	rdb := cache.NewRedisClient(cfg.Redis)
+	rdb := cache.NewRedisClient(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, cfg.Redis.PoolSize)
 	for i := 1; i <= 3; i++ {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // MUST CANCEL MANUALLY; DO NOT DEFER
+		ctx, cancel := context.WithTimeout(context.Background(), cfg.Worker.RedisTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER
 		err = rdb.Ping(ctx).Err()
 		cancel()
 		if err == nil {
@@ -107,6 +107,8 @@ func main() {
 	}
 
 	bf := cache.NewBloomFilter(rdb, keys.SeenBloomFilter)
+
+	// TODO: Actual user input for seed URLs instead of hardcoding
 	for i := 1; i <= 1; i++ {
 		task := models.CrawlTask{
 			TraceID: uuid.New().String(),
@@ -123,7 +125,7 @@ func main() {
 			continue
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // MUST CANCEL MANUALLY; DO NOT DEFER
+		ctx, cancel := context.WithTimeout(context.Background(), cfg.Worker.RedisTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER
 		isNew, err := bf.CheckAndSet(ctx, task.URL)
 		cancel()
 		if err != nil {
@@ -134,7 +136,7 @@ func main() {
 			continue
 		}
 
-		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second) // MUST CANCEL MANUALLY; DO NOT DEFER
+		ctx, cancel = context.WithTimeout(context.Background(), cfg.Crawler.PublishTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER
 		err = ch.PublishWithContext(ctx,
 			"",     // exchange
 			q.Name, // routing key

@@ -2,9 +2,9 @@ package keys
 
 const (
 	FrontierQueue     = "vortex:frontier:pending"
-	SeenBloomFilter   = "vortex:seen:urls"
-	CooldownQueue     = "vortex:cooldown:urls"
-	RobotsCachePrefix = "vortex:robots:"
-	RateLimitPrefix   = "vortex:limit:"
+	SeenBloomFilter   = "vortex:frontier:seen"
+	CooldownQueue     = "vortex:frontier:cooldown"
+	RobotsCachePrefix = "vortex:frontier:robots:"
+	RateLimitPrefix   = "vortex:frontier:limit:"
 	ProcessingQueue   = "vortex:processing:pending"
 )

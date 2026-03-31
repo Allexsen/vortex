@@ -28,8 +28,10 @@ type RedisConfig struct {
 }
 
 type WorkerConfig struct {
-	Count       int
-	TaskTimeout time.Duration
+	Count        int
+	MaxRetries   int
+	TaskTimeout  time.Duration
+	RedisTimeout time.Duration
 }
 
 type RobotsConfig struct {
@@ -66,8 +68,10 @@ func Load() (*Config, error) {
 			PoolSize: getInt("REDIS_POOL_SIZE", 10),
 		},
 		Worker: WorkerConfig{
-			Count:       getInt("WORKER_COUNT", 50),
-			TaskTimeout: getDuration("WORKER_TASK_TIMEOUT", 60*time.Second),
+			Count:        getInt("WORKER_COUNT", 50),
+			MaxRetries:   getInt("WORKER_MAX_RETRIES", 3),
+			TaskTimeout:  getDuration("WORKER_TASK_TIMEOUT", 60*time.Second),
+			RedisTimeout: getDuration("WORKER_REDIS_TIMEOUT", 5*time.Second),
 		},
 		Robots: RobotsConfig{
 			UserAgent:      getString("ROBOTS_USER_AGENT", "VortexBot"),
