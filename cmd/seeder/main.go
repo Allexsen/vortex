@@ -107,6 +107,8 @@ func main() {
 	}
 
 	bf := cache.NewBloomFilter(rdb, keys.SeenBloomFilter)
+
+	// TODO: Actual user input for seed URLs instead of hardcoding
 	for i := 1; i <= 1; i++ {
 		task := models.CrawlTask{
 			TraceID: uuid.New().String(),
