@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/url"
 	"time"
 )
@@ -30,7 +30,7 @@ func NewEtiquetteEngine(cache RulesCache, fetcher *Fetcher, userAgent string) *E
 func (e *EtiquetteEngine) CanCrawl(ctx context.Context, rawURL string) (bool, time.Duration, error) {
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil {
-		log.Printf("Error parsing URL: %s", err)
+		slog.Error("Invalid URL", "url", rawURL, "error", err)
 		return false, 0, err
 	}
 	domain := parsedURL.Hostname()
@@ -38,11 +38,11 @@ func (e *EtiquetteEngine) CanCrawl(ctx context.Context, rawURL string) (bool, ti
 
 	data, err := e.cache.Get(ctx, domain)
 	if err != nil {
-		log.Printf("Cache read failed for %s: %v", domain, err)
+		slog.Warn("Cache read failed", "domain", domain, "error", err)
 	}
 
 	if data != nil && bytes.Equal(data, deniedMarker) {
-		log.Printf("Robots disallowed for %s", domain)
+		slog.Info("Robots disallowed", "domain", domain)
 		return false, 0, nil
 	}
 
@@ -55,17 +55,17 @@ func (e *EtiquetteEngine) CanCrawl(ctx context.Context, rawURL string) (bool, ti
 		data, err = e.fetcher.Fetch(ctx, robotsURL.String())
 		if err != nil {
 			if errors.Is(err, ErrAccessDenied) {
-				log.Printf("Access denied for %s: %v", domain, err)
+				slog.Info("Access denied", "domain", domain, "error", err)
 				e.setCache(ctx, domain, deniedMarker, 2*time.Hour) // Cache denial for 2 hours
 				return false, 0, nil
 			}
 
-			log.Printf("Transient error for %s: %v", domain, err)
+			slog.Error("Transient error", "domain", domain, "error", err)
 			return false, 0, err
 		}
 
 		if data == nil {
-			log.Printf("No robots.txt found for %s, allowing crawl", domain)
+			slog.Info("No robots.txt found", "domain", domain)
 			e.setCache(ctx, domain, []byte{}, 24*time.Hour) // Cache empty result
 			return true, 0, nil
 		} else {
@@ -75,7 +75,7 @@ func (e *EtiquetteEngine) CanCrawl(ctx context.Context, rawURL string) (bool, ti
 
 	rules, err := parseRobotsTxt(data)
 	if err != nil {
-		log.Printf("Error parsing robots.txt for %s: %v", domain, err)
+		slog.Warn("Parsing error, defaulting to allow", "domain", domain, "error", err)
 		return true, 0, nil
 	}
 
@@ -87,6 +87,6 @@ func (e *EtiquetteEngine) CanCrawl(ctx context.Context, rawURL string) (bool, ti
 func (e *EtiquetteEngine) setCache(ctx context.Context, domain string, data []byte, ttl time.Duration) {
 	err := e.cache.Set(ctx, domain, data, ttl)
 	if err != nil {
-		log.Printf("Cache write failed for %s: %v", domain, err)
+		slog.Warn("Cache write failed", "domain", domain, "error", err)
 	}
 }
