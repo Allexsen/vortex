@@ -8,13 +8,9 @@ import (
 	"log/slog"
 	"net/url"
 	"time"
-	"vortex/internal/cache"
-	"vortex/internal/cooldown"
 	httpFetcher "vortex/internal/fetcher"
 	"vortex/internal/models"
 	"vortex/internal/parser"
-	"vortex/internal/ratelimit"
-	robotstxt "vortex/internal/robots"
 
 	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -24,11 +20,11 @@ type Worker struct {
 	id string
 
 	conn        *amqp.Connection
-	limiter     ratelimit.Limiter
-	queue       cooldown.Queue
-	robots      *robotstxt.EtiquetteEngine
-	fetcher     *httpFetcher.Fetcher
-	bloomFilter *cache.BloomFilter
+	limiter     Limiter
+	queue       CooldownQueue
+	robots      EtiquetteEngine
+	fetcher     Fetcher
+	bloomFilter BloomFilter
 
 	maxDepth       int
 	maxRetries     int
@@ -41,8 +37,8 @@ type Worker struct {
 	processingQueue string
 }
 
-func NewWorker(id string, conn *amqp.Connection, limiter ratelimit.Limiter, queue cooldown.Queue,
-	robots *robotstxt.EtiquetteEngine, fetcher *httpFetcher.Fetcher, bloomFilter *cache.BloomFilter,
+func NewWorker(id string, conn *amqp.Connection, limiter Limiter, queue CooldownQueue,
+	robots EtiquetteEngine, fetcher Fetcher, bloomFilter BloomFilter,
 	maxDepth, maxRetries int,
 	publishTimeout, redisTimeout, taskTimeout, cooldownTTL time.Duration,
 	frontierQueue, processingQueue string) *Worker {

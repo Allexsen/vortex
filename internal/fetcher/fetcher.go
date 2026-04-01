@@ -8,16 +8,18 @@ import (
 	"time"
 )
 
+type HTTPClient interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
 type Fetcher struct {
-	client    *http.Client
+	client    HTTPClient
 	userAgent string
 }
 
-func NewFetcher(timeout time.Duration, userAgent string) *Fetcher {
+func NewFetcher(client HTTPClient, userAgent string) *Fetcher {
 	return &Fetcher{
-		client: &http.Client{
-			Timeout: timeout,
-		},
+		client:    client,
 		userAgent: userAgent,
 	}
 }

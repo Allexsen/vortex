@@ -5,20 +5,19 @@ import (
 	"encoding/json"
 	"log/slog"
 	"time"
-	"vortex/internal/cooldown"
 	"vortex/internal/keys"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type Poller struct {
-	queue cooldown.Queue
+	queue CooldownQueue
 	conn  *amqp.Connection
 
 	pollerInterval time.Duration
 }
 
-func NewPoller(queue cooldown.Queue, conn *amqp.Connection, pollerInterval time.Duration) *Poller {
+func NewPoller(queue CooldownQueue, conn *amqp.Connection, pollerInterval time.Duration) *Poller {
 	return &Poller{
 		queue:          queue,
 		conn:           conn,
