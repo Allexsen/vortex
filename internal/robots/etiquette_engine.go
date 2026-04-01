@@ -15,14 +15,14 @@ var (
 
 type EtiquetteEngine struct {
 	cache     RulesCache
-	fetcher   *Fetcher
+	fetcher   Fetcher
 	userAgent string
 
 	cacheTTL       time.Duration
 	deniedCacheTTL time.Duration
 }
 
-func NewEtiquetteEngine(cache RulesCache, fetcher *Fetcher, userAgent string, cacheTTL, deniedCacheTTL time.Duration) *EtiquetteEngine {
+func NewEtiquetteEngine(cache RulesCache, fetcher Fetcher, userAgent string, cacheTTL, deniedCacheTTL time.Duration) *EtiquetteEngine {
 	return &EtiquetteEngine{
 		cache:          cache,
 		fetcher:        fetcher,

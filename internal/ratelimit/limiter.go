@@ -8,18 +8,18 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-type Limiter interface {
-	Allow(context.Context, string) (bool, error)
+type RedisClient interface {
+	TxPipelined(ctx context.Context, fn func(pipe redis.Pipeliner) error) ([]redis.Cmder, error)
 }
 
 type RedisLimiter struct {
-	client *redis.Client
+	client RedisClient
 	prefix string
 	limit  int
 	window time.Duration
 }
 
-func NewRedisLimiter(client *redis.Client, prefix string, limit int, window time.Duration) *RedisLimiter {
+func NewRedisLimiter(client RedisClient, prefix string, limit int, window time.Duration) *RedisLimiter {
 	return &RedisLimiter{
 		client: client,
 		prefix: prefix,

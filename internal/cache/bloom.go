@@ -6,12 +6,16 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+type BloomClient interface {
+	Do(ctx context.Context, args ...interface{}) *redis.Cmd
+}
+
 type BloomFilter struct {
-	rdb *redis.Client
+	rdb BloomClient
 	key string
 }
 
-func NewBloomFilter(rdb *redis.Client, key string) *BloomFilter {
+func NewBloomFilter(rdb BloomClient, key string) *BloomFilter {
 	return &BloomFilter{
 		rdb: rdb,
 		key: key,

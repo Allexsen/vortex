@@ -7,19 +7,19 @@ import (
 	"net/http"
 )
 
-type Fetcher struct {
+type RobotsFetcher struct {
 	client    *http.Client
 	userAgent string
 }
 
-func NewFetcher(client *http.Client, userAgent string) *Fetcher {
-	return &Fetcher{
+func NewFetcher(client *http.Client, userAgent string) *RobotsFetcher {
+	return &RobotsFetcher{
 		client:    client,
 		userAgent: userAgent,
 	}
 }
 
-func (f *Fetcher) Fetch(ctx context.Context, url string) ([]byte, error) {
+func (f *RobotsFetcher) Fetch(ctx context.Context, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err

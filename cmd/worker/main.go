@@ -137,7 +137,8 @@ func main() {
 		cfg.Robots.DeniedCacheTTL,
 	)
 
-	fetcher := httpFetcher.NewFetcher(cfg.Fetcher.Timeout, cfg.Fetcher.UserAgent)
+	httpClientWithTimeout := &http.Client{Timeout: cfg.Fetcher.Timeout}
+	fetcher := httpFetcher.NewFetcher(httpClientWithTimeout, cfg.Fetcher.UserAgent)
 	bloomFilter := cache.NewBloomFilter(rdb, keys.SeenBloomFilter)
 
 	for i := 1; i <= cfg.Worker.Count; i++ {

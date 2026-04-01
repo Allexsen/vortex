@@ -20,11 +20,6 @@ var (
 	`)
 )
 
-type Queue interface {
-	Push(context.Context, models.CrawlTask, time.Duration) error
-	PopExpired(context.Context) ([]models.CrawlTask, error)
-}
-
 type RedisQueue struct {
 	client *redis.Client
 	key    string
