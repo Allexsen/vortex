@@ -7,12 +7,17 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+type CacheClient interface {
+	Set(ctx context.Context, key string, value interface{}, expiration time.Duration) *redis.StatusCmd
+	Get(ctx context.Context, key string) *redis.StringCmd
+}
+
 type RedisCache struct {
-	client *redis.Client
+	client CacheClient
 	prefix string
 }
 
-func NewRedisCache(client *redis.Client, prefix string) *RedisCache {
+func NewRedisCache(client CacheClient, prefix string) *RedisCache {
 	return &RedisCache{
 		client: client,
 		prefix: prefix,
