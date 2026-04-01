@@ -84,8 +84,9 @@ func (e *EtiquetteEngine) CanCrawl(ctx context.Context, rawURL string) (bool, ti
 		return true, 0, nil
 	}
 
-	allowed := rules.TestAgent(e.userAgent, path)
-	crawlDelay := rules.FindGroup(e.userAgent).CrawlDelay
+	group := rules.FindGroup(e.userAgent)
+	allowed := group.Test(path)
+	crawlDelay := group.CrawlDelay
 	return allowed, crawlDelay, nil
 }
 

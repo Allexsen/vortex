@@ -81,13 +81,14 @@ func TestCanCrawl(t *testing.T) {
 			cacheData: map[string][]byte{"example.com": []byte("ROBOTS_DENIED")},
 			wantAllow: false,
 		},
-		// NOTE: temoto/robotstxt's TestAgent() does not enforce Disallow rules
-		// correctly — it always returns true. FindGroup().Test() works, but
-		// the production code uses TestAgent. This is a known library quirk.
-		// Path-based allow/deny is effectively not tested here because the
-		// production behavior doesn't enforce it.
 		{
-			name:      "cache hit - path check delegates to robotstxt",
+			name:      "cache hit - path disallowed",
+			url:       "https://example.com/private/secret",
+			cacheData: map[string][]byte{"example.com": disallowPrivate},
+			wantAllow: false,
+		},
+		{
+			name:      "cache hit - path allowed",
 			url:       "https://example.com/public",
 			cacheData: map[string][]byte{"example.com": disallowPrivate},
 			wantAllow: true,
