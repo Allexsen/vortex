@@ -23,6 +23,7 @@ services:
       POSTGRES_DB: vortex
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
   
   # seeder:
   #   TODO: containerize Go seeder

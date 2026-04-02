@@ -4,6 +4,9 @@ import pika
 import time
 import sys
 import json
+from .chunker import chunk_text
+from .embedder import Embedder
+from .db import Database
 
 logging.basicConfig(
     level=logging.INFO,
@@ -12,6 +15,35 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 QUEUE_NAME = "vortex:processing:pending"
+
+class MessageHandler:
+    def __init__(self, embedder, db):
+        self.embedder = embedder
+        self.db = db
+    
+    def handle(self, channel, method, properties, body):
+        data = json.loads(body)
+        trace_id = data.get("trace_id")
+        url = data.get("url")
+        logger.info("Received message: trace_id=%s url=%s", trace_id, url)
+
+        try:
+            content = data.get("content", "")
+            if not content:
+                logger.warning("No content found for trace_id=%s url=%s", trace_id, url)
+                channel.basic_ack(delivery_tag=method.delivery_tag)
+                return
+            chunks = chunk_text(content)
+            embeddings = self.embedder.encode(chunks)
+            article_id = self.db.insert_article(trace_id, url, content)
+            self.db.insert_chunks(article_id, chunks, embeddings)
+            self.db.commit()
+            logger.info("Processed and stored article: trace_id=%s url=%s", trace_id, url)
+            channel.basic_ack(delivery_tag=method.delivery_tag)
+        except Exception as e:
+            logger.error("Error processing message: trace_id=%s url=%s error=%s", trace_id, url, e)
+            self.db.rollback()
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
 def connect_to_rabbitmq(url):
     for attempt in range(1, 4):
@@ -27,11 +59,6 @@ def connect_to_rabbitmq(url):
         logger.error("Failed to connect to RabbitMQ after 3 attempts")
         sys.exit(1)
 
-def on_message(channel, method, properties, body):
-    data = json.loads(body)
-    logger.info("Received message: trace_id=%s url=%s", data.get("trace_id"), data.get("url"))
-    channel.basic_ack(delivery_tag=method.delivery_tag)
-
 def main():
     url = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
 
@@ -40,7 +67,14 @@ def main():
 
     channel.queue_declare(queue=QUEUE_NAME, durable=True)
     channel.basic_qos(prefetch_count=1)
-    channel.basic_consume(queue=QUEUE_NAME, on_message_callback=on_message)
+
+    model_name = os.environ.get("EMBEDDING_MODEL", "all-mpnet-base-v2")
+    device = os.environ.get("EMBEDDING_DEVICE", "cuda")
+    embedder = Embedder(model_name=model_name, device=device)
+    
+    db = Database(os.environ.get("POSTGRES_URL", "postgresql://vortex:vortex@localhost:5432/vortex"))
+    handler = MessageHandler(embedder, db)
+    channel.basic_consume(queue=QUEUE_NAME, on_message_callback=handler.handle)
 
     logger.info("Waiting for messages on %s", QUEUE_NAME)
     try:
@@ -49,6 +83,7 @@ def main():
         logger.info("Shutting down gracefully...")
         channel.stop_consuming()
     finally:
+        db.close()
         connection.close()
 
 if __name__ == "__main__":
