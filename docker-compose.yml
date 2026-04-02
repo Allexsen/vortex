@@ -24,6 +24,28 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
   
+  # seeder:
+  #   TODO: containerize Go seeder
+
+  # crawler:
+  #   TODO: containerize Go worker
+  
+  embedder:
+    build: ./worker-py
+    depends_on:
+      - message_broker
+      - vector_store
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@message_broker:5672/
+      POSTGRES_URL: postgresql://vortex:vortex@vector_store:5432/vortex
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+  
 volumes:
   pgdata:
   redisdata:
