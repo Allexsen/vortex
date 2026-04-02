@@ -3,17 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
-	"io"
-	"log"
-	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"time"
 	"vortex/internal/cache"
 	"vortex/internal/config"
 	"vortex/internal/cooldown"
 	httpFetcher "vortex/internal/fetcher"
+	"vortex/internal/infra"
 	"vortex/internal/keys"
 	"vortex/internal/ratelimit"
 	robotstxt "vortex/internal/robots"
@@ -24,27 +21,12 @@ import (
 )
 
 func main() {
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	slog.SetDefault(logger)
-
 	const logDir = "logs"
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		logger.Error("Failed to create log directory", "error", err)
-		os.Exit(1)
-	}
-
-	logPath := filepath.Join(logDir, "vortex.log")
-	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0666)
+	logger, err := infra.SetupLogger(logDir)
 	if err != nil {
-		logger.Error("Failed to open log file", "error", err)
+		logger.Error("Failed to set up logger", "error", err)
 		os.Exit(1)
 	}
-	defer file.Close()
-
-	multiWriter := io.MultiWriter(os.Stdout, file)
-	log.SetOutput(multiWriter)
-	logger = slog.New(slog.NewJSONHandler(multiWriter, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	slog.SetDefault(logger)
 
 	if err := godotenv.Load(); err != nil {
 		logger.Warn("No .env file found, using environment variables")
