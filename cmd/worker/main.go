@@ -17,7 +17,6 @@ import (
 	"vortex/internal/worker"
 
 	"github.com/joho/godotenv"
-	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 func main() {
@@ -38,27 +37,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	var conn *amqp.Connection
-	for i := 1; i <= 3; i++ {
-		conn, err = amqp.Dial(cfg.RabbitMQ.URL)
-		if err == nil {
-			logger.Info("Connected to RabbitMQ")
-			break
-		}
-		logger.Warn("RabbitMQ not ready.. attempting to reconnect in 5s", "attempt", i, "error", err)
-		time.Sleep(5 * time.Second)
-	}
+	conn, ch, err := infra.SetupRabbitMQ(cfg.RabbitMQ.URL)
 	if err != nil {
-		logger.Error("Failed to connect to RabbitMQ after 3 attempts", "error", err)
+		logger.Error("Failed to set up RabbitMQ", "error", err)
 		os.Exit(1)
 	}
 	defer conn.Close()
-
-	ch, err := conn.Channel()
-	if err != nil {
-		logger.Error("Failed to open amqp channel", "error", err)
-		os.Exit(1)
-	}
 	defer ch.Close()
 
 	_, err = ch.QueueDeclare(
