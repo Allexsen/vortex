@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"time"
 	"vortex/internal/cache"
 	"vortex/internal/config"
 	"vortex/internal/cooldown"
@@ -72,20 +71,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	rdb := cache.NewRedisClient(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, cfg.Redis.PoolSize)
-	for i := 1; i <= 3; i++ {
-		ctx, cancel := context.WithTimeout(context.Background(), cfg.Worker.RedisTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER.
-		err = rdb.Ping(ctx).Err()
-		cancel()
-		if err == nil {
-			logger.Info("Connected to Redis")
-			break
-		}
-		logger.Warn("Redis not ready.. attempting to reconnect in 5s", "attempt", i, "error", err)
-		time.Sleep(5 * time.Second)
-	}
+	rdb, err := infra.SetupRedis(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, cfg.Redis.PoolSize, cfg.Worker.RedisTimeout)
 	if err != nil {
-		logger.Error("Failed to connect to Redis after 3 attempts", "error", err)
+		logger.Error("Failed to set up Redis", "error", err)
 		os.Exit(1)
 	}
 
@@ -124,8 +112,6 @@ func main() {
 	p := worker.NewPoller(queue, conn, cfg.Crawler.PollerInterval)
 	go p.Run(context.Background())
 
-	var forever chan struct{}
-
 	logger.Info("Waiting for messages. To exit press CTRL+C")
-	<-forever
+	select {}
 }
