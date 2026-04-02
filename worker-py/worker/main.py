@@ -23,9 +23,9 @@ def connect_to_rabbitmq(url):
             logger.warning("RabbitMQ not ready, attempt %d/3: %s", attempt, e)
             if attempt < 3:
                 time.sleep(5)
-    
-    logger.error("Failed to connect to RabbitMQ after 3 attempts")
-    sys.exit(1)
+    else:
+        logger.error("Failed to connect to RabbitMQ after 3 attempts")
+        sys.exit(1)
 
 def on_message(channel, method, properties, body):
     data = json.loads(body)
