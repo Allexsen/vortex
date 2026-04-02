@@ -20,7 +20,6 @@ func SetupLogger(logDir string) (*slog.Logger, error) {
 	if err != nil {
 		return logger, err
 	}
-	defer file.Close()
 
 	multiWriter := io.MultiWriter(os.Stdout, file)
 	logger = slog.New(slog.NewJSONHandler(multiWriter, &slog.HandlerOptions{Level: slog.LevelInfo}))
