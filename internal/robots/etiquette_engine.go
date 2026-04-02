@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/url"
 	"time"
+
+	"github.com/temoto/robotstxt"
 )
 
 var (
@@ -78,7 +80,7 @@ func (e *EtiquetteEngine) CanCrawl(ctx context.Context, rawURL string) (bool, ti
 		}
 	}
 
-	rules, err := parseRobotsTxt(data)
+	rules, err := robotstxt.FromBytes(data)
 	if err != nil {
 		slog.Warn("Parsing error, defaulting to allow", "domain", domain, "error", err)
 		return true, 0, nil
