@@ -14,6 +14,7 @@ type Config struct {
 	Robots   RobotsConfig
 	Crawler  CrawlerConfig
 	Fetcher  FetcherConfig
+	Search   SearchConfig
 }
 
 type RabbitMQConfig struct {
@@ -56,6 +57,13 @@ type FetcherConfig struct {
 	UserAgent string
 }
 
+type SearchConfig struct {
+	PostgresURL string
+	EmbedderURL string
+	Port        string
+	Timeout     time.Duration
+}
+
 func Load() (*Config, error) {
 	return &Config{
 		RabbitMQ: RabbitMQConfig{
@@ -91,6 +99,12 @@ func Load() (*Config, error) {
 		Fetcher: FetcherConfig{
 			Timeout:   getDuration("FETCHER_TIMEOUT", 30*time.Second),
 			UserAgent: getString("FETCHER_USER_AGENT", "VortexBot/1.0"),
+		},
+		Search: SearchConfig{
+			PostgresURL: getString("POSTGRES_URL", "postgres://vortex:vortex@localhost:5432/vortex"),
+			EmbedderURL: getString("SEARCH_EMBED_URL", "http://embedder:8000/embed"),
+			Port:        getString("SEARCH_PORT", "8080"),
+			Timeout:     getDuration("SEARCH_TIMEOUT", 10*time.Second),
 		},
 	}, nil
 }
