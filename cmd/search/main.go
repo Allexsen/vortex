@@ -60,6 +60,10 @@ func main() {
 
 	server := &Server{db: conn, embedderURL: cfg.Search.EmbedderURL, timeout: cfg.Search.Timeout, logger: logger}
 	mux.HandleFunc("GET /search", server.handler)
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir("cmd/search/static"))))
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "cmd/search/static/index.html")
+	})
 
 	port := ":" + cfg.Search.Port
 	logger.Info("Starting search server", "port", port)
