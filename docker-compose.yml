@@ -25,12 +25,40 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
   
-  # seeder:
-  #   TODO: containerize Go seeder
+  seeder:
+    build:
+      context: .
+      args:
+        SERVICE: seeder
+    depends_on:
+      - message_broker
+      - state_store
+    env_file: .env
 
-  # crawler:
-  #   TODO: containerize Go worker
-  
+  crawler:
+    build:
+      context: .
+      args:
+        SERVICE: worker
+    depends_on:
+      - message_broker
+      - state_store
+    env_file: .env
+
+  search:
+    build:
+      context: .
+      dockerfile: cmd/search/Dockerfile
+    ports:
+      - "8080:8080"
+    depends_on:
+      - vector_store
+      - embedder
+    env_file: .env
+    environment:
+      SEARCH_EMBED_URL: http://embedder:8000/embed
+      POSTGRES_URL: postgres://vortex:vortex@vector_store:5432/vortex
+
   embedder:
     build: ./worker-py
     depends_on:
