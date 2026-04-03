@@ -1,12 +1,12 @@
 import os
 import logging
-import pika
-import time
-import sys
-import json
-from .chunker import chunk_text
-from .embedder import Embedder
-from .db import Database
+import threading
+import uvicorn
+
+from . import embedder
+from . import db as dbmod
+from . import consumer
+from . import api
 
 logging.basicConfig(
     level=logging.INFO,
@@ -14,77 +14,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-QUEUE_NAME = "vortex:processing:pending"
-
-class MessageHandler:
-    def __init__(self, embedder, db):
-        self.embedder = embedder
-        self.db = db
-    
-    def handle(self, channel, method, properties, body):
-        data = json.loads(body)
-        trace_id = data.get("trace_id")
-        url = data.get("url")
-        logger.info("Received message: trace_id=%s url=%s", trace_id, url)
-
-        try:
-            content = data.get("content", "")
-            if not content:
-                logger.warning("No content found for trace_id=%s url=%s", trace_id, url)
-                channel.basic_ack(delivery_tag=method.delivery_tag)
-                return
-            chunks = chunk_text(content)
-            embeddings = self.embedder.encode(chunks)
-            article_id = self.db.insert_article(trace_id, url, content)
-            self.db.insert_chunks(article_id, chunks, embeddings)
-            self.db.commit()
-            logger.info("Processed and stored article: trace_id=%s url=%s", trace_id, url)
-            channel.basic_ack(delivery_tag=method.delivery_tag)
-        except Exception as e:
-            logger.error("Error processing message: trace_id=%s url=%s error=%s", trace_id, url, e)
-            self.db.rollback()
-            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
-
-def connect_to_rabbitmq(url):
-    for attempt in range(1, 4):
-        try:
-            connection = pika.BlockingConnection(pika.URLParameters(url))
-            logger.info("Connected to RabbitMQ")
-            return connection
-        except Exception as e:
-            logger.warning("RabbitMQ not ready, attempt %d/3: %s", attempt, e)
-            if attempt < 3:
-                time.sleep(5)
-    else:
-        logger.error("Failed to connect to RabbitMQ after 3 attempts")
-        sys.exit(1)
 
 def main():
-    url = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-
-    connection = connect_to_rabbitmq(url)
-    channel = connection.channel()
-
-    channel.queue_declare(queue=QUEUE_NAME, durable=True)
-    channel.basic_qos(prefetch_count=1)
-
     model_name = os.environ.get("EMBEDDING_MODEL", "all-mpnet-base-v2")
     device = os.environ.get("EMBEDDING_DEVICE", "cuda")
-    embedder = Embedder(model_name=model_name, device=device)
     
-    db = Database(os.environ.get("POSTGRES_URL", "postgresql://vortex:vortex@localhost:5432/vortex"))
-    handler = MessageHandler(embedder, db)
-    channel.basic_consume(queue=QUEUE_NAME, on_message_callback=handler.handle)
+    model = embedder.Embedder(model_name=model_name, device=device)
+    db = dbmod.Database(os.environ.get("POSTGRES_URL", "postgresql://vortex:vortex@localhost:5432/vortex"))
+    threading.Thread(target=consumer.start, args=(model, db)).start()
 
-    logger.info("Waiting for messages on %s", QUEUE_NAME)
-    try:
-        channel.start_consuming()
-    except KeyboardInterrupt:
-        logger.info("Shutting down gracefully...")
-        channel.stop_consuming()
-    finally:
-        db.close()
-        connection.close()
+    app = api.create_app(model)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 
 if __name__ == "__main__":
     main()

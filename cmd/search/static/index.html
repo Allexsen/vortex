@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vortex</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <div class="logo">vortex<span>.search</span></div>
+    </header>
+
+    <div class="search-wrapper" id="searchWrapper">
+        <div class="search-hero" id="searchHero">
+            <h1>Vortex</h1>
+            <p>Semantic search across crawled content</p>
+        </div>
+
+        <div class="search-bar">
+            <input
+                type="text"
+                id="searchInput"
+                placeholder="Search for anything..."
+                autocomplete="off"
+                autofocus
+            />
+            <button id="searchBtn" aria-label="Search">
+                <svg viewBox="0 0 24 24">
+                    <circle cx="11" cy="11" r="8"/>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+            </button>
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="skeleton"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div></div>
+            <div class="skeleton"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div></div>
+            <div class="skeleton"><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div><div class="skeleton-line"></div></div>
+        </div>
+
+        <div class="empty-state" id="emptyState">
+            No results found. Try a different query.
+        </div>
+
+        <div class="error-state" id="errorState">
+            Something went wrong. Please try again.
+        </div>
+
+        <div class="results-container" id="results"></div>
+    </div>
+
+    <div class="kbd-hint"><kbd>/</kbd> to search</div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
