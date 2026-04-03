@@ -22,7 +22,7 @@ CREATE TABLE chunks (
 
 -- Semantic similarity search (cosine distance, IVFFlat index)
 CREATE INDEX idx_chunks_embedding ON chunks
-    USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+    USING hnsw (embedding vector_cosine_ops);
 
 -- Fast URL lookups for dedup
 CREATE INDEX idx_articles_url ON articles (url);
