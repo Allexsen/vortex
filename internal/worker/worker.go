@@ -285,8 +285,9 @@ func (w *Worker) publish(runCtx context.Context, ch *amqp.Channel, queue string,
 		false, // mandatory
 		false, // immediate
 		amqp.Publishing{
-			ContentType: "application/json",
-			Body:        payloadJSON,
+			DeliveryMode: amqp.Persistent,
+			ContentType:  "application/json",
+			Body:         payloadJSON,
 		},
 	)
 

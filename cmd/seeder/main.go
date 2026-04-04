@@ -99,8 +99,9 @@ func main() {
 			false,  // mandatory
 			false,  // immediate
 			amqp.Publishing{
-				ContentType: "application/json",
-				Body:        taskJSON,
+				DeliveryMode: amqp.Persistent,
+				ContentType:  "application/json",
+				Body:         taskJSON,
 			},
 		)
 		cancel()

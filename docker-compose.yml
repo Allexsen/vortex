@@ -6,6 +6,8 @@ services:
     ports:
       - "5672:5672"
       - "15672:15672"
+    volumes:
+      - rabbitmqdata:/var/lib/rabbitmq
     deploy:
       resources:
         limits:
@@ -75,6 +77,9 @@ services:
           memory: 256M
           cpus: '0.25'
     env_file: .env
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@message_broker:5672/
+      REDIS_ADDR: state_store:6379
 
   crawler:
     build:
@@ -93,6 +98,9 @@ services:
           memory: 512M
           cpus: '0.5'
     env_file: .env
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@message_broker:5672/
+      REDIS_ADDR: state_store:6379
 
   search:
     build:
@@ -116,7 +124,7 @@ services:
       SEARCH_EMBED_URL: http://embedder:8000/embed
       POSTGRES_URL: postgres://vortex:vortex@vector_store:5432/vortex
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -143,12 +151,13 @@ services:
               count: 1
               capabilities: [gpu]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
       timeout: 5s
       retries: 3
-      start_period: 30s
+      start_period: 300s
   
 volumes:
   pgdata:
   redisdata:
+  rabbitmqdata:

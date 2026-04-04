@@ -61,8 +61,9 @@ func (p *Poller) Run(ctx context.Context) {
 					false,              // mandatory
 					false,              // immediate
 					amqp.Publishing{
-						ContentType: "application/json",
-						Body:        taskJSON,
+						DeliveryMode: amqp.Persistent,
+						ContentType:  "application/json",
+						Body:         taskJSON,
 					},
 				)
 				if err != nil {
