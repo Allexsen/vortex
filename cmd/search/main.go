@@ -15,13 +15,13 @@ import (
 	"vortex/internal/config"
 	"vortex/internal/infra"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	"github.com/pgvector/pgvector-go"
 )
 
 type Server struct {
-	db          *pgx.Conn
+	db          *pgxpool.Pool
 	embedderURL string
 	timeout     time.Duration
 	logger      *slog.Logger
@@ -54,12 +54,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	conn, err := pgx.Connect(ctx, cfg.Search.PostgresURL)
+	conn, err := pgxpool.New(ctx, cfg.Search.PostgresURL)
 	if err != nil {
 		logger.Error("failed to connect to Postgres", "error", err)
 		os.Exit(1)
 	}
-	defer conn.Close(context.Background())
+	defer conn.Close()
 
 	mux := http.NewServeMux()
 
