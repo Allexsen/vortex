@@ -18,11 +18,12 @@ import (
 
 func main() {
 	const logDir = "logs"
-	logger, err := infra.SetupLogger(logDir)
+	logger, cleanupFunc, err := infra.SetupLogger(logDir)
 	if err != nil {
 		logger.Error("Failed to set up logger", "error", err)
 		os.Exit(1)
 	}
+	defer cleanupFunc()
 
 	if err := godotenv.Load(); err != nil {
 		logger.Warn("No .env file found, using environment variables")
