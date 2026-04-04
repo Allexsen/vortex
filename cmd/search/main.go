@@ -8,7 +8,9 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 	"vortex/internal/config"
 	"vortex/internal/infra"
@@ -49,7 +51,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	conn, err := pgx.Connect(context.Background(), cfg.Search.PostgresURL)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	conn, err := pgx.Connect(ctx, cfg.Search.PostgresURL)
 	if err != nil {
 		logger.Error("failed to connect to Postgres", "error", err)
 		os.Exit(1)
@@ -65,12 +70,22 @@ func main() {
 		http.ServeFile(w, r, "cmd/search/static/index.html")
 	})
 
-	port := ":" + cfg.Search.Port
-	logger.Info("Starting search server", "port", port)
-	if err := http.ListenAndServe(port, mux); err != nil {
+	httpServer := &http.Server{Addr: ":" + cfg.Search.Port, Handler: mux}
+
+	go func() {
+		<-ctx.Done()
+		logger.Info("Shutting down search server...")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		httpServer.Shutdown(shutdownCtx)
+	}()
+
+	logger.Info("Starting search server", "port", cfg.Search.Port)
+	if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
 		logger.Error("Failed to start search server", "error", err)
 		os.Exit(1)
 	}
+	logger.Info("Search server stopped")
 }
 
 func (s *Server) handler(w http.ResponseWriter, r *http.Request) {
