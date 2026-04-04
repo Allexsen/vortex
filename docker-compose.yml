@@ -2,9 +2,15 @@ version: '3.8'
 services:
   message_broker:
     image: rabbitmq:3-management-alpine
+    restart: unless-stopped
     ports:
       - "5672:5672"
       - "15672:15672"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
       interval: 10s
@@ -13,10 +19,16 @@ services:
 
   state_store:
     image: redis/redis-stack-server:latest
+    restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
       - redisdata:/data
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -25,6 +37,7 @@ services:
 
   vector_store:
     image: pgvector/pgvector:pg16
+    restart: unless-stopped
     ports:
       - "5432:5432"
     environment:
@@ -34,6 +47,11 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U vortex"]
       interval: 10s
@@ -45,11 +63,17 @@ services:
       context: .
       args:
         SERVICE: seeder
+    restart: on-failure
     depends_on:
       message_broker:
         condition: service_healthy
       state_store:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.25'
     env_file: .env
 
   crawler:
@@ -57,17 +81,24 @@ services:
       context: .
       args:
         SERVICE: worker
+    restart: unless-stopped
     depends_on:
       message_broker:
         condition: service_healthy
       state_store:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
     env_file: .env
 
   search:
     build:
       context: .
       dockerfile: cmd/search/Dockerfile
+    restart: unless-stopped
     ports:
       - "8080:8080"
     depends_on:
@@ -75,6 +106,11 @@ services:
         condition: service_healthy
       embedder:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
     env_file: .env
     environment:
       SEARCH_EMBED_URL: http://embedder:8000/embed
@@ -87,6 +123,7 @@ services:
 
   embedder:
     build: ./worker-py
+    restart: unless-stopped
     depends_on:
       message_broker:
         condition: service_healthy
@@ -97,6 +134,9 @@ services:
       POSTGRES_URL: postgresql://vortex:vortex@vector_store:5432/vortex
     deploy:
       resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
         reservations:
           devices:
             - driver: nvidia
