@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -38,6 +39,7 @@ func TestFetch(t *testing.T) {
 			url:  "https://example.com",
 			resp: &http.Response{
 				StatusCode: 200,
+				Header:     http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
 				Body:       io.NopCloser(strings.NewReader("hello world")),
 			},
 			wantBody: "hello world",
@@ -122,6 +124,66 @@ func TestFetch(t *testing.T) {
 			url:     "://",
 			wantErr: true,
 		},
+		{
+			name:    "SSRF blocked - loopback IP",
+			url:     "http://127.0.0.1/secret",
+			wantErr: true,
+		},
+		{
+			name:    "SSRF blocked - private class A",
+			url:     "http://10.0.0.1/internal",
+			wantErr: true,
+		},
+		{
+			name:    "SSRF blocked - private class C",
+			url:     "http://192.168.1.1/admin",
+			wantErr: true,
+		},
+		{
+			name:    "SSRF blocked - link-local / AWS metadata",
+			url:     "http://169.254.169.254/latest/meta-data/",
+			wantErr: true,
+		},
+		{
+			name: "rejected content type - image",
+			url:  "https://example.com/image.png",
+			resp: &http.Response{
+				StatusCode: 200,
+				Header:     http.Header{"Content-Type": []string{"image/png"}},
+				Body:       io.NopCloser(strings.NewReader("binary data")),
+			},
+			wantErr: true,
+		},
+		{
+			name: "rejected content type - JSON",
+			url:  "https://example.com/api",
+			resp: &http.Response{
+				StatusCode: 200,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader("{}")),
+			},
+			wantErr: true,
+		},
+		{
+			name: "accepted content type - xhtml",
+			url:  "https://example.com",
+			resp: &http.Response{
+				StatusCode: 200,
+				Header:     http.Header{"Content-Type": []string{"application/xhtml+xml"}},
+				Body:       io.NopCloser(strings.NewReader("<html></html>")),
+			},
+			wantBody: "<html></html>",
+		},
+		{
+			name: "accepted content type - empty (missing header)",
+			url:  "https://example.com",
+			resp: &http.Response{
+				StatusCode: 200,
+				Header:     http.Header{},
+				Body:       io.NopCloser(strings.NewReader("some content")),
+			},
+			wantBody: "some content",
+		},
 	}
 
 	for _, tt := range tests {
@@ -169,6 +231,7 @@ func TestFetchSetsUserAgent(t *testing.T) {
 	mock := &mockHTTPClient{
 		resp: &http.Response{
 			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"text/html"}},
 			Body:       io.NopCloser(strings.NewReader("")),
 		},
 	}
@@ -194,4 +257,119 @@ type uaCapturingClient struct {
 func (c *uaCapturingClient) Do(req *http.Request) (*http.Response, error) {
 	*c.capturedUA = req.Header.Get("User-Agent")
 	return c.inner.Do(req)
+}
+
+func TestFetchBodySizeLimit(t *testing.T) {
+	// Create a body that exceeds MaxBodySize
+	oversized := strings.Repeat("a", fetcher.MaxBodySize+1)
+	mock := &mockHTTPClient{
+		resp: &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{"Content-Type": []string{"text/html"}},
+			Body:       io.NopCloser(strings.NewReader(oversized)),
+		},
+	}
+
+	f := fetcher.NewFetcher(mock, "TestBot/1.0")
+	_, err := f.Fetch(context.Background(), "https://example.com")
+
+	if err == nil {
+		t.Fatal("expected error for oversized body, got nil")
+	}
+	if !strings.Contains(err.Error(), "exceeds") {
+		t.Errorf("expected body size error, got: %v", err)
+	}
+}
+
+func TestIsPrivateIP(t *testing.T) {
+	tests := []struct {
+		ip      string
+		private bool
+	}{
+		{"127.0.0.1", true},
+		{"127.255.255.255", true},
+		{"10.0.0.1", true},
+		{"10.255.255.255", true},
+		{"172.16.0.1", true},
+		{"172.31.255.255", true},
+		{"172.32.0.1", false},
+		{"192.168.0.1", true},
+		{"192.168.255.255", true},
+		{"169.254.169.254", true},
+		{"0.0.0.0", true},
+		{"8.8.8.8", false},
+		{"93.184.216.34", false},
+		{"1.1.1.1", false},
+		{"::1", true},
+		{"fc00::1", true},
+		{"fe80::1", true},
+		{"2607:f8b0:4004:800::200e", false}, // Google public IPv6
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.ip, func(t *testing.T) {
+			ip := net.ParseIP(tt.ip)
+			if ip == nil {
+				t.Fatalf("failed to parse IP: %s", tt.ip)
+			}
+			got := fetcher.IsPrivateIP(ip)
+			if got != tt.private {
+				t.Errorf("IsPrivateIP(%s) = %v, want %v", tt.ip, got, tt.private)
+			}
+		})
+	}
+}
+
+func TestIsAllowedContentType(t *testing.T) {
+	tests := []struct {
+		ct      string
+		allowed bool
+	}{
+		{"text/html", true},
+		{"text/html; charset=utf-8", true},
+		{"TEXT/HTML", true},
+		{"application/xhtml+xml", true},
+		{"", true},
+		{"application/json", false},
+		{"image/png", false},
+		{"application/pdf", false},
+		{"application/zip", false},
+		{"text/plain", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.ct, func(t *testing.T) {
+			got := fetcher.IsAllowedContentType(tt.ct)
+			if got != tt.allowed {
+				t.Errorf("IsAllowedContentType(%q) = %v, want %v", tt.ct, got, tt.allowed)
+			}
+		})
+	}
+}
+
+func TestCheckSSRF(t *testing.T) {
+	tests := []struct {
+		name    string
+		url     string
+		wantErr bool
+	}{
+		{"loopback", "http://127.0.0.1/secret", true},
+		{"private 10.x", "http://10.0.0.1/admin", true},
+		{"private 172.16.x", "http://172.16.0.1/internal", true},
+		{"private 192.168.x", "http://192.168.1.1/router", true},
+		{"link-local", "http://169.254.169.254/metadata", true},
+		{"zero network", "http://0.0.0.0/", true},
+		{"IPv6 loopback", "http://[::1]/secret", true},
+		{"missing hostname", "http:///path", true},
+		{"empty string", "", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := fetcher.CheckSSRF(tt.url)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("CheckSSRF(%q) error = %v, wantErr %v", tt.url, err, tt.wantErr)
+			}
+		})
+	}
 }

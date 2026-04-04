@@ -40,20 +40,37 @@ function renderResults(data, query) {
         const relevance = toRelevance(item.distance);
         const el = document.createElement('div');
         el.className = 'result';
-        el.innerHTML = `
-            <div class="result-url">
-                <a href="${item.url}" target="_blank" rel="noopener">${item.url}</a>
-            </div>
-            <div class="result-text">${truncate(item.chunk_text, 300)}</div>
-            <div class="result-footer">
-                <div class="relevance-bar">
-                    <div class="relevance-track">
-                        <div class="relevance-fill" style="width: ${relevance}%"></div>
-                    </div>
-                    ${relevance}%
-                </div>
-            </div>
-        `;
+
+        const urlDiv = document.createElement('div');
+        urlDiv.className = 'result-url';
+        const link = document.createElement('a');
+        link.href = item.url.startsWith('http') ? item.url : '#';
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.textContent = item.url;
+        urlDiv.appendChild(link);
+
+        const textDiv = document.createElement('div');
+        textDiv.className = 'result-text';
+        textDiv.textContent = truncate(item.chunk_text, 300);
+
+        const footerDiv = document.createElement('div');
+        footerDiv.className = 'result-footer';
+        const bar = document.createElement('div');
+        bar.className = 'relevance-bar';
+        const track = document.createElement('div');
+        track.className = 'relevance-track';
+        const fill = document.createElement('div');
+        fill.className = 'relevance-fill';
+        fill.style.width = `${relevance}%`;
+        track.appendChild(fill);
+        bar.appendChild(track);
+        bar.appendChild(document.createTextNode(` ${relevance}%`));
+        footerDiv.appendChild(bar);
+
+        el.appendChild(urlDiv);
+        el.appendChild(textDiv);
+        el.appendChild(footerDiv);
         resultsContainer.appendChild(el);
     });
 }

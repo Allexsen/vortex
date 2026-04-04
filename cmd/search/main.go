@@ -110,6 +110,10 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing query parameter 'q'", http.StatusBadRequest)
 		return
 	}
+	if len(q) > 2000 {
+		http.Error(w, "query too long", http.StatusBadRequest)
+		return
+	}
 
 	s.logger.Info("Received search request", "query", q)
 
