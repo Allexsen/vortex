@@ -64,7 +64,8 @@ func main() {
 	mux := http.NewServeMux()
 
 	server := &Server{db: conn, embedderURL: cfg.Search.EmbedderURL, timeout: cfg.Search.Timeout, logger: logger}
-	mux.HandleFunc("GET /search", server.handler)
+	mux.HandleFunc("GET /health", server.healthHandler)
+	mux.HandleFunc("GET /search", server.searchHandler)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir("cmd/search/static"))))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "cmd/search/static/index.html")
@@ -88,7 +89,21 @@ func main() {
 	logger.Info("Search server stopped")
 }
 
-func (s *Server) handler(w http.ResponseWriter, r *http.Request) {
+func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	if err := s.db.Ping(ctx); err != nil {
+		s.logger.Error("Health check failed", "error", err)
+		http.Error(w, "postgres unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("ok"))
+}
+
+func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	if q == "" {
 		http.Error(w, "missing query parameter 'q'", http.StatusBadRequest)
