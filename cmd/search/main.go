@@ -8,18 +8,20 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 	"vortex/internal/config"
 	"vortex/internal/infra"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	"github.com/pgvector/pgvector-go"
 )
 
 type Server struct {
-	db          *pgx.Conn
+	db          *pgxpool.Pool
 	embedderURL string
 	timeout     time.Duration
 	logger      *slog.Logger
@@ -33,11 +35,12 @@ type SearchResult struct {
 
 func main() {
 	const logDir = "logs"
-	logger, err := infra.SetupLogger(logDir)
+	logger, cleanupFunc, err := infra.SetupLogger(logDir)
 	if err != nil {
 		logger.Error("Failed to set up logger", "error", err)
 		os.Exit(1)
 	}
+	defer cleanupFunc()
 
 	if err := godotenv.Load(); err != nil {
 		logger.Warn("No .env file found, using environment variables")
@@ -49,34 +52,66 @@ func main() {
 		os.Exit(1)
 	}
 
-	conn, err := pgx.Connect(context.Background(), cfg.Search.PostgresURL)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	conn, err := pgxpool.New(ctx, cfg.Search.PostgresURL)
 	if err != nil {
 		logger.Error("failed to connect to Postgres", "error", err)
 		os.Exit(1)
 	}
-	defer conn.Close(context.Background())
+	defer conn.Close()
 
 	mux := http.NewServeMux()
 
 	server := &Server{db: conn, embedderURL: cfg.Search.EmbedderURL, timeout: cfg.Search.Timeout, logger: logger}
-	mux.HandleFunc("GET /search", server.handler)
+	mux.HandleFunc("GET /health", server.healthHandler)
+	mux.HandleFunc("GET /search", server.searchHandler)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir("cmd/search/static"))))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "cmd/search/static/index.html")
 	})
 
-	port := ":" + cfg.Search.Port
-	logger.Info("Starting search server", "port", port)
-	if err := http.ListenAndServe(port, mux); err != nil {
+	httpServer := &http.Server{Addr: ":" + cfg.Search.Port, Handler: mux}
+
+	go func() {
+		<-ctx.Done()
+		logger.Info("Shutting down search server...")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		httpServer.Shutdown(shutdownCtx)
+	}()
+
+	logger.Info("Starting search server", "port", cfg.Search.Port)
+	if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
 		logger.Error("Failed to start search server", "error", err)
 		os.Exit(1)
 	}
+	logger.Info("Search server stopped")
 }
 
-func (s *Server) handler(w http.ResponseWriter, r *http.Request) {
+func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	if err := s.db.Ping(ctx); err != nil {
+		s.logger.Error("Health check failed", "error", err)
+		http.Error(w, "postgres unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("ok"))
+}
+
+func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	if q == "" {
 		http.Error(w, "missing query parameter 'q'", http.StatusBadRequest)
+		return
+	}
+	if len(q) > 2000 {
+		http.Error(w, "query too long", http.StatusBadRequest)
 		return
 	}
 

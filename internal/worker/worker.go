@@ -87,68 +87,76 @@ func (w *Worker) Run(runCtx context.Context) error {
 	}
 
 	slog.Info("Worker started, waiting for messages", "worker_id", w.id)
-	for msg := range msgs {
-		slog.Info("Received a message", "worker_id", w.id, "body", msg.Body)
+	for {
+		select {
+		case <-runCtx.Done():
+			slog.Info("Worker received shutdown signal", "worker_id", w.id)
+			return nil
+		case msg, ok := <-msgs:
+			if !ok {
+				slog.Info("Message channel closed", "worker_id", w.id)
+				return nil
+			}
+			slog.Info("Received a message", "worker_id", w.id, "body", msg.Body)
 
-		ctx, cancel := context.WithTimeout(runCtx, w.taskTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER.
-		taskResult, err := w.processTask(ctx, msg.Body)
-		cancel()
+			ctx, cancel := context.WithTimeout(runCtx, w.taskTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER.
+			taskResult, err := w.processTask(ctx, msg.Body)
+			cancel()
 
-		if err == nil {
-			newTasks := taskResult.NewCrawlTasks
-			slog.Info("Task completed successfully", "worker_id", w.id, "task_id", taskResult.Task.TraceID, "new_tasks", len(newTasks))
+			if err == nil {
+				newTasks := taskResult.NewCrawlTasks
+				slog.Info("Task completed successfully", "worker_id", w.id, "task_id", taskResult.Task.TraceID, "new_tasks", len(newTasks))
 
-			if len(taskResult.Content) > 0 {
-				err = w.publishCrawlResult(runCtx, ch, taskResult)
-				if err != nil {
-					slog.Error("Failed to publish crawl result", "worker_id", w.id, "task_id", taskResult.Task.TraceID, "error", err)
+				if len(taskResult.Content) > 0 {
+					err = w.publishCrawlResult(runCtx, ch, taskResult)
+					if err != nil {
+						slog.Error("Failed to publish crawl result", "worker_id", w.id, "task_id", taskResult.Task.TraceID, "error", err)
+					}
 				}
+
+				for _, t := range newTasks {
+					ctx, cancel := context.WithTimeout(runCtx, w.redisTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER.
+					ok, err := w.bloomFilter.CheckAndSet(ctx, t.URL)
+					cancel()
+					if err != nil {
+						slog.Error("Failed to check bloom filter", "worker_id", w.id, "task_id", t.TraceID, "url", t.URL, "error", err)
+						continue
+					}
+
+					if !ok {
+						slog.Debug("URL already seen, skipping", "worker_id", w.id, "task_id", t.TraceID, "url", t.URL)
+						continue
+					}
+
+					err = w.publish(runCtx, ch, w.frontierQueue, t)
+					if err != nil {
+						slog.Error("Failed to publish new task", "worker_id", w.id, "task_id", t.TraceID, "url", t.URL, "error", err)
+						continue
+					}
+				}
+				msg.Ack(false)
+				continue
 			}
 
-			for _, t := range newTasks {
-				ctx, cancel := context.WithTimeout(runCtx, w.redisTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER.
-				ok, err := w.bloomFilter.CheckAndSet(ctx, t.URL)
-				cancel()
+			if errors.Is(err, ErrTransient) {
+				slog.Warn("Requeuing task", "worker_id", w.id, "error", err)
+				taskResult.Task.Attempt++
+				err = w.publish(runCtx, ch, w.frontierQueue, taskResult.Task)
 				if err != nil {
-					slog.Error("Failed to check bloom filter", "worker_id", w.id, "task_id", t.TraceID, "url", t.URL, "error", err)
-					continue
+					slog.Error("Failed to requeue task", "worker_id", w.id, "task_id", taskResult.Task.TraceID, "error", err)
 				}
+				msg.Ack(false)
+				continue
+			}
 
-				if !ok {
-					slog.Debug("URL already seen, skipping", "worker_id", w.id, "task_id", t.TraceID, "url", t.URL)
-					continue
-				}
-
-				err = w.publish(runCtx, ch, w.frontierQueue, t)
-				if err != nil {
-					slog.Error("Failed to publish new task", "worker_id", w.id, "task_id", t.TraceID, "url", t.URL, "error", err)
-					continue
-				}
+			if taskResult != nil {
+				slog.Warn("Dropping task due to permanent error", "worker_id", w.id, "task_id", taskResult.Task.TraceID, "url", taskResult.Task.URL, "error", err)
+			} else {
+				slog.Warn("Dropping task due to permanent error and failed to parse task details", "worker_id", w.id, "error", err)
 			}
 			msg.Ack(false)
-			continue
 		}
-
-		if errors.Is(err, ErrTransient) {
-			slog.Warn("Requeuing task", "worker_id", w.id, "error", err)
-			taskResult.Task.Attempt++
-			err = w.publish(runCtx, ch, w.frontierQueue, taskResult.Task)
-			if err != nil {
-				slog.Error("Failed to requeue task", "worker_id", w.id, "task_id", taskResult.Task.TraceID, "error", err)
-			}
-			msg.Ack(false)
-			continue
-		}
-
-		if taskResult != nil {
-			slog.Warn("Dropping task due to permanent error", "worker_id", w.id, "task_id", taskResult.Task.TraceID, "url", taskResult.Task.URL, "error", err)
-		} else {
-			slog.Warn("Dropping task due to permanent error and failed to parse task details", "worker_id", w.id, "error", err)
-		}
-		msg.Ack(false)
 	}
-
-	return nil
 }
 
 func (w *Worker) processTask(ctx context.Context, body []byte) (*taskResult, error) {
@@ -277,8 +285,9 @@ func (w *Worker) publish(runCtx context.Context, ch *amqp.Channel, queue string,
 		false, // mandatory
 		false, // immediate
 		amqp.Publishing{
-			ContentType: "application/json",
-			Body:        payloadJSON,
+			DeliveryMode: amqp.Persistent,
+			ContentType:  "application/json",
+			Body:         payloadJSON,
 		},
 	)
 

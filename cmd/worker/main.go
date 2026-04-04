@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 	"vortex/internal/cache"
 	"vortex/internal/config"
 	"vortex/internal/cooldown"
@@ -20,11 +23,12 @@ import (
 
 func main() {
 	const logDir = "logs"
-	logger, err := infra.SetupLogger(logDir)
+	logger, cleanupFunc, err := infra.SetupLogger(logDir)
 	if err != nil {
 		logger.Error("Failed to set up logger", "error", err)
 		os.Exit(1)
 	}
+	defer cleanupFunc()
 
 	if err := godotenv.Load(); err != nil {
 		logger.Warn("No .env file found, using environment variables")
@@ -41,8 +45,16 @@ func main() {
 		logger.Error("Failed to set up RabbitMQ", "error", err)
 		os.Exit(1)
 	}
-	defer conn.Close()
-	defer ch.Close()
+	defer func() {
+		if err := conn.Close(); err != nil {
+			logger.Error("Failed to gracefully close RabbitMQ connection", "error", err)
+		}
+	}()
+	defer func() {
+		if err := ch.Close(); err != nil {
+			logger.Error("Failed to gracefully close RabbitMQ channel", "error", err)
+		}
+	}()
 
 	_, err = ch.QueueDeclare(
 		keys.FrontierQueue, // name
@@ -76,6 +88,11 @@ func main() {
 		logger.Error("Failed to set up Redis", "error", err)
 		os.Exit(1)
 	}
+	defer func() {
+		if err := rdb.Close(); err != nil {
+			logger.Error("Failed to gracefully close Redis client", "error", err)
+		}
+	}()
 
 	limiter := ratelimit.NewRedisLimiter(rdb, keys.RateLimitPrefix, cfg.Crawler.RateLimit, cfg.Crawler.RateLimitWindow)
 	queue := cooldown.NewRedisQueue(rdb, keys.CooldownQueue)
@@ -95,23 +112,39 @@ func main() {
 	fetcher := httpFetcher.NewFetcher(httpClientWithTimeout, cfg.Fetcher.UserAgent)
 	bloomFilter := cache.NewBloomFilter(rdb, keys.SeenBloomFilter)
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	wg := &sync.WaitGroup{}
+	wg.Add(cfg.Worker.Count)
 	for i := 1; i <= cfg.Worker.Count; i++ {
 		go func() {
+			defer wg.Done()
 			w := worker.NewWorker(fmt.Sprintf("worker-%d", i),
 				conn, limiter, queue, robots, fetcher, bloomFilter,
 				cfg.Crawler.MaxDepth, cfg.Worker.MaxRetries,
 				cfg.Crawler.PublishTimeout, cfg.Worker.RedisTimeout, cfg.Worker.TaskTimeout, cfg.Crawler.CooldownTTL,
 				keys.FrontierQueue, keys.ProcessingQueue,
 			)
-			if err := w.Run(context.Background()); err != nil {
+			if err := w.Run(ctx); err != nil {
 				logger.Error("Worker encountered an error", "error", err)
+			} else {
+				logger.Info("Worker stopped gracefully")
 			}
 		}()
 	}
 
+	wg.Add(1)
 	p := worker.NewPoller(queue, conn, cfg.Crawler.PollerInterval)
-	go p.Run(context.Background())
+	go func() {
+		defer wg.Done()
+		p.Run(ctx)
+		logger.Info("Poller stopped gracefully")
+
+	}()
 
 	logger.Info("Waiting for messages. To exit press CTRL+C")
-	select {}
+
+	wg.Wait()
+	logger.Info("All workers stopped, exiting")
 }

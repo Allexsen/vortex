@@ -40,26 +40,34 @@ class MessageHandler:
             self.db.rollback()
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
 
-def start(model, db):
-    url = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
-    connection = connect_to_rabbitmq(url)
-    channel = connection.channel()
+class Consumer:
+    def __init__(self, model, db):
+        self.model = model
+        self.db = db
+        self.channel = None
+        self.connection = None
 
-    channel.queue_declare(queue=QUEUE_NAME, durable=True)
-    channel.basic_qos(prefetch_count=1)
+    def start(self):
+        url = os.getenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+        self.connection = connect_to_rabbitmq(url)
+        self.channel = self.connection.channel()
 
-    handler = MessageHandler(model, db)
-    channel.basic_consume(queue=QUEUE_NAME, on_message_callback=handler.handle)
+        self.channel.queue_declare(queue=QUEUE_NAME, durable=True)
+        self.channel.basic_qos(prefetch_count=1)
 
-    logger.info("Waiting for messages on %s", QUEUE_NAME)
-    try:
-        channel.start_consuming()
-    except KeyboardInterrupt:
-        logger.info("Shutting down gracefully...")
-        channel.stop_consuming()
-    finally:
-        db.close()
-        connection.close()
+        handler = MessageHandler(self.model, self.db)
+        self.channel.basic_consume(queue=QUEUE_NAME, on_message_callback=handler.handle)
+
+        logger.info("Waiting for messages on %s", QUEUE_NAME)
+        try:
+            self.channel.start_consuming()
+        finally:
+            self.connection.close()
+            logger.info("Consumer stopped")
+
+    def stop(self):
+        if self.channel:
+            self.channel.stop_consuming()
 
 def connect_to_rabbitmq(url):
     for attempt in range(1, 4):
