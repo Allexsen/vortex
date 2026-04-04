@@ -49,7 +49,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # ---- Application Code ----
 # Copied last so code changes don't invalidate the dependency layers.
+RUN groupadd -r vortex && useradd -r -g vortex -m vortex
+
 COPY worker/ worker/
+
+RUN mkdir -p /home/vortex/.cache && chown -R vortex:vortex /home/vortex/.cache
+
+USER vortex
 
 # ---- Entry Point ----
 # -m runs worker/main.py as a module. This is the Python convention for
