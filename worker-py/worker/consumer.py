@@ -31,7 +31,7 @@ class MessageHandler:
         self.db = db
     
     def handle(self, channel, method, properties, body):
-        timer = MESSAGE_PROCESS_LATENCY.time()
+        start = time.time()
 
         data = json.loads(body)
         trace_id = data.get("trace_id")
@@ -59,7 +59,7 @@ class MessageHandler:
             self.db.rollback()
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
         finally:
-            timer.observe_duration()
+            MESSAGE_PROCESS_LATENCY.observe(time.time() - start)
 
 class Consumer:
     def __init__(self, model, db):
