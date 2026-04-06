@@ -33,6 +33,7 @@ type WorkerConfig struct {
 	MaxRetries   int
 	TaskTimeout  time.Duration
 	RedisTimeout time.Duration
+	MetricsPort  string
 }
 
 type RobotsConfig struct {
@@ -80,6 +81,7 @@ func Load() (*Config, error) {
 			MaxRetries:   getInt("WORKER_MAX_RETRIES", 3),
 			TaskTimeout:  getDuration("WORKER_TASK_TIMEOUT", 60*time.Second),
 			RedisTimeout: getDuration("WORKER_REDIS_TIMEOUT", 5*time.Second),
+			MetricsPort:  getString("WORKER_METRICS_PORT", "2112"),
 		},
 		Robots: RobotsConfig{
 			UserAgent:      getString("ROBOTS_USER_AGENT", "VortexBot"),

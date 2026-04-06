@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	"github.com/pgvector/pgvector-go"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 type Server struct {
@@ -65,6 +66,8 @@ func main() {
 	mux := http.NewServeMux()
 
 	server := &Server{db: conn, embedderURL: cfg.Search.EmbedderURL, timeout: cfg.Search.Timeout, logger: logger}
+	mux.Handle("/metrics", promhttp.Handler())
+
 	mux.HandleFunc("GET /health", server.healthHandler)
 	mux.HandleFunc("GET /search", server.searchHandler)
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir("cmd/search/static"))))
