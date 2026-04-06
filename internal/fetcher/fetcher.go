@@ -51,6 +51,11 @@ func NewFetcher(client HTTPClient, userAgent string) *Fetcher {
 }
 
 func (f *Fetcher) Fetch(ctx context.Context, rawURL string) ([]byte, error) {
+	startFetch := time.Now()
+	defer func() {
+		FetchLatencySeconds.Observe(time.Since(startFetch).Seconds())
+	}()
+
 	if err := CheckSSRF(rawURL); err != nil {
 		return nil, err
 	}
@@ -64,11 +69,14 @@ func (f *Fetcher) Fetch(ctx context.Context, rawURL string) ([]byte, error) {
 
 	resp, err := f.client.Do(req)
 	if err != nil {
+		FetchErrorsTotal.WithLabelValues("network").Inc()
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusTooManyRequests {
+		FetchErrorsTotal.WithLabelValues("rate_limited").Inc()
+
 		retryAfterStr := resp.Header.Get("Retry-After")
 		retryAfter, err := strconv.Atoi(retryAfterStr)
 		if err != nil {
@@ -79,18 +87,22 @@ func (f *Fetcher) Fetch(ctx context.Context, rawURL string) ([]byte, error) {
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		FetchErrorsTotal.WithLabelValues("request_error").Inc()
 		return nil, &RequestError{StatusCode: resp.StatusCode}
 	}
 
 	if ct := resp.Header.Get("Content-Type"); !IsAllowedContentType(ct) {
+		FetchErrorsTotal.WithLabelValues("unsupported_content_type").Inc()
 		return nil, fmt.Errorf("unsupported content type: %s", ct)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxBodySize+1))
 	if err != nil {
+		FetchErrorsTotal.WithLabelValues("read_body_error").Inc()
 		return nil, err
 	}
 	if len(body) > MaxBodySize {
+		FetchErrorsTotal.WithLabelValues("body_too_large").Inc()
 		return nil, fmt.Errorf("response body exceeds %d bytes", MaxBodySize)
 	}
 
