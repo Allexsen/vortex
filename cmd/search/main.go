@@ -108,12 +108,19 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	defer func() {
+		SearchRequestDurationSeconds.Observe(time.Since(start).Seconds())
+	}()
+
 	q := r.URL.Query().Get("q")
 	if q == "" {
+		SearchRequestsTotal.WithLabelValues("error").Inc()
 		http.Error(w, "missing query parameter 'q'", http.StatusBadRequest)
 		return
 	}
 	if len(q) > 2000 {
+		SearchRequestsTotal.WithLabelValues("error").Inc()
 		http.Error(w, "query too long", http.StatusBadRequest)
 		return
 	}
@@ -122,8 +129,10 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
 	defer cancel()
+
 	embedding, err := s.embed(ctx, q)
 	if err != nil {
+		SearchRequestsTotal.WithLabelValues("error").Inc()
 		s.logger.Error("Failed to get embedding", "error", err)
 		http.Error(w, "failed to get embedding", http.StatusInternalServerError)
 		return
@@ -143,11 +152,13 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 
 	results, err := s.search(ctx, embedding, limit)
 	if err != nil {
+		SearchRequestsTotal.WithLabelValues("error").Inc()
 		s.logger.Error("Failed to search database", "error", err)
 		http.Error(w, "failed to search database", http.StatusInternalServerError)
 		return
 	}
 
+	SearchRequestsTotal.WithLabelValues("success").Inc()
 	s.logger.Info("Search completed", "query", q, "results", len(results))
 
 	w.Header().Set("Content-Type", "application/json")
@@ -155,6 +166,11 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) embed(ctx context.Context, text string) ([]float32, error) {
+	embedStart := time.Now()
+	defer func() {
+		SearchEmbedDurationSeconds.Observe(time.Since(embedStart).Seconds())
+	}()
+
 	reqJSON, err := json.Marshal(map[string]string{"text": text})
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
