@@ -116,6 +116,8 @@ func main() {
 	defer stop()
 
 	wg := &sync.WaitGroup{}
+	infra.StartMetricsServer(ctx, wg, cfg.Worker.MetricsPort)
+
 	wg.Add(cfg.Worker.Count)
 	for i := 1; i <= cfg.Worker.Count; i++ {
 		go func() {

@@ -39,10 +39,16 @@ func (q *RedisQueue) Push(ctx context.Context, task models.CrawlTask, duration t
 	}
 
 	score := float64(time.Now().Add(duration).Unix()) // cooldown duration
-	return q.client.ZAdd(ctx, q.key, redis.Z{
+	err = q.client.ZAdd(ctx, q.key, redis.Z{
 		Score:  score,
 		Member: taskJSON,
 	}).Err()
+	if err != nil {
+		return err
+	}
+	CooldownPushesTotal.Inc()
+
+	return nil
 }
 
 func (q *RedisQueue) PopExpired(ctx context.Context) ([]models.CrawlTask, error) {

@@ -70,6 +70,8 @@ func (p *Poller) Run(ctx context.Context) {
 					slog.Error("Failed to publish task back to frontier", "task_id", task.TraceID, "error", err)
 					continue
 				}
+				CooldownRepublishedTotal.Inc()
+				slog.Info("Republished task from cooldown to frontier", "task_id", task.TraceID, "url", task.URL)
 			}
 		}
 	}

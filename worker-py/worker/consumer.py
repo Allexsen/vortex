@@ -4,10 +4,24 @@ import time
 import pika
 import json
 from . import chunker
+from prometheus_client import Counter, Histogram
 
 import logging
 
 logger = logging.getLogger(__name__)
+
+MESSAGES_PROCESSED_TOTAL = Counter(
+    "vortex_messages_processed_total",
+    "Total number of messages processed",
+    labelnames=["status"]
+)
+
+MESSAGE_PROCESS_LATENCY = Histogram(
+    "vortex_message_process_latency_seconds",
+    "Time to process a message",
+    buckets=[0.1, 0.25, 0.5, 1, 2.5, 5, 10]
+)
+
 
 QUEUE_NAME = "vortex:processing:pending"
 
@@ -17,6 +31,8 @@ class MessageHandler:
         self.db = db
     
     def handle(self, channel, method, properties, body):
+        start = time.time()
+
         data = json.loads(body)
         trace_id = data.get("trace_id")
         url = data.get("url")
@@ -25,6 +41,7 @@ class MessageHandler:
         try:
             content = data.get("content", "")
             if not content:
+                MESSAGES_PROCESSED_TOTAL.labels(status="no_content").inc()
                 logger.warning("No content found for trace_id=%s url=%s", trace_id, url)
                 channel.basic_ack(delivery_tag=method.delivery_tag)
                 return
@@ -35,10 +52,14 @@ class MessageHandler:
             self.db.commit()
             logger.info("Processed and stored article: trace_id=%s url=%s", trace_id, url)
             channel.basic_ack(delivery_tag=method.delivery_tag)
+            MESSAGES_PROCESSED_TOTAL.labels(status="success").inc()
         except Exception as e:
+            MESSAGES_PROCESSED_TOTAL.labels(status="error").inc()
             logger.error("Error processing message: trace_id=%s url=%s error=%s", trace_id, url, e)
             self.db.rollback()
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        finally:
+            MESSAGE_PROCESS_LATENCY.observe(time.time() - start)
 
 class Consumer:
     def __init__(self, model, db):

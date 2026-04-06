@@ -1,4 +1,16 @@
 from sentence_transformers import SentenceTransformer
+from prometheus_client import Counter, Histogram
+
+EMBED_LATENCY = Histogram(
+    "vortex_embedder_latency_seconds",
+    "Time to encode chunks",
+    buckets=[0.1, 0.25, 0.5, 1, 2.5, 5, 10]
+)
+
+EMBED_CHUNKS_ENCODED_TOTAL = Counter(
+    "vortex_embedder_chunks_encoded_total",
+    "Total number of chunks encoded"
+)
 
 
 class Embedder:
@@ -6,4 +18,6 @@ class Embedder:
         self.model = SentenceTransformer(model_name, device=device)
 
     def encode(self, chunks):
-        return self.model.encode(chunks)
+        EMBED_CHUNKS_ENCODED_TOTAL.inc(len(chunks))
+        with EMBED_LATENCY.time():
+            return self.model.encode(chunks)
