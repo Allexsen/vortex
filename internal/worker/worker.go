@@ -102,8 +102,9 @@ func (w *Worker) Run(runCtx context.Context) error {
 			ctx, cancel := context.WithTimeout(runCtx, w.taskTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER.
 			taskResult, err := w.processTask(ctx, msg.Body)
 			cancel()
-
 			if err == nil {
+				TasksProcessedTotal.WithLabelValues("success").Inc()
+
 				newTasks := taskResult.NewCrawlTasks
 				slog.Info("Task completed successfully", "worker_id", w.id, "task_id", taskResult.Task.TraceID, "new_tasks", len(newTasks))
 
@@ -139,6 +140,8 @@ func (w *Worker) Run(runCtx context.Context) error {
 			}
 
 			if errors.Is(err, ErrTransient) {
+				TasksProcessedTotal.WithLabelValues("transient_error").Inc()
+
 				slog.Warn("Requeuing task", "worker_id", w.id, "error", err)
 				taskResult.Task.Attempt++
 				err = w.publish(runCtx, ch, w.frontierQueue, taskResult.Task)
@@ -149,6 +152,7 @@ func (w *Worker) Run(runCtx context.Context) error {
 				continue
 			}
 
+			TasksProcessedTotal.WithLabelValues("dropped").Inc()
 			if taskResult != nil {
 				slog.Warn("Dropping task due to permanent error", "worker_id", w.id, "task_id", taskResult.Task.TraceID, "url", taskResult.Task.URL, "error", err)
 			} else {
@@ -160,6 +164,11 @@ func (w *Worker) Run(runCtx context.Context) error {
 }
 
 func (w *Worker) processTask(ctx context.Context, body []byte) (*taskResult, error) {
+	startProcess := time.Now()
+	defer func() {
+		PageProcessSeconds.Observe(time.Since(startProcess).Seconds())
+	}()
+
 	var task models.CrawlTask
 	err := json.Unmarshal(body, &task)
 	if err != nil {
@@ -218,10 +227,12 @@ func (w *Worker) processTask(ctx context.Context, body []byte) (*taskResult, err
 		var rateErr *httpFetcher.RateLimitedError
 		if errors.As(err, &rateErr) {
 			slog.Info("Rate limited when fetching URL", "task_id", task.TraceID, "url", task.URL, "error", err, "retry_after", rateErr.RetryAfter)
+
 			err = w.queue.Push(ctx, task, rateErr.RetryAfter)
 			if err != nil {
 				return taskResult, fmt.Errorf("%w: failed to push to cooldown: %v", ErrTransient, err)
 			}
+
 			return taskResult, nil
 		} else {
 			var reqErr *httpFetcher.RequestError
@@ -231,8 +242,10 @@ func (w *Worker) processTask(ctx context.Context, body []byte) (*taskResult, err
 			}
 		}
 
+		slog.Warn("Failed to fetch URL", "task_id", task.TraceID, "url", task.URL, "error", err)
 		return taskResult, fmt.Errorf("%w: failed to fetch URL: %v", ErrTransient, err)
 	}
+	PagesCrawledTotal.Inc()
 	slog.Info("Successfully fetched URL", "task_id", task.TraceID, "url", task.URL, "size", len(page))
 
 	taskResult.Content, err = parser.ExtractText(page)
@@ -330,5 +343,6 @@ func buildNewTasks(rawURLs []string, parentTraceID string, depth int) []models.C
 		newTasks = append(newTasks, newTask)
 	}
 
+	URLsDiscoveredTotal.Add(float64(len(newTasks)))
 	return newTasks
 }
