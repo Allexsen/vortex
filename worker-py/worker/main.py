@@ -3,14 +3,19 @@ import logging
 import threading
 import uvicorn
 
+from pythonjsonlogger import jsonlogger
+
 from . import embedder
 from . import db as dbmod
 from . import consumer
 from . import api
 
+handler = logging.StreamHandler()
+handler.setFormatter(jsonlogger.JsonFormatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[handler],
 )
 logger = logging.getLogger(__name__)
 
