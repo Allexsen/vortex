@@ -63,6 +63,9 @@ type SearchConfig struct {
 	EmbedderURL string
 	Port        string
 	Timeout     time.Duration
+
+	RateLimit int
+	RateBurst int
 }
 
 func Load() (*Config, error) {
@@ -107,6 +110,8 @@ func Load() (*Config, error) {
 			EmbedderURL: getString("SEARCH_EMBED_URL", "http://embedder:8000/embed"),
 			Port:        getString("SEARCH_PORT", "8080"),
 			Timeout:     getDuration("SEARCH_TIMEOUT", 10*time.Second),
+			RateLimit:   getInt("SEARCH_RATE_LIMIT", 3),
+			RateBurst:   getInt("SEARCH_RATE_BURST", 10),
 		},
 	}, nil
 }

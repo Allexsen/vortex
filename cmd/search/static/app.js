@@ -17,6 +17,21 @@ function truncate(text, maxLen) {
     return text.substring(0, maxLen).trimEnd() + '...';
 }
 
+const errorMessages = {
+    429: 'Too many requests. Please slow down.',
+    400: 'Invalid search query.',
+    500: 'Server error. Please try again later.',
+    502: 'Server is temporarily unavailable.',
+    503: 'Service is currently unavailable.',
+    0:   'Could not reach the server. Check your connection.',
+};
+
+function showError(status) {
+    const msg = errorMessages[status] || `Something went wrong (${status}).`;
+    errorState.textContent = msg;
+    errorState.classList.add('active');
+}
+
 function renderResults(data, query) {
     resultsContainer.innerHTML = '';
     loading.classList.remove('active');
@@ -87,12 +102,16 @@ async function doSearch(query) {
 
     try {
         const res = await fetch(`/search?q=${encodeURIComponent(query.trim())}&limit=10`);
-        if (!res.ok) throw new Error(res.statusText);
+        if (!res.ok) {
+            loading.classList.remove('active');
+            showError(res.status);
+            return;
+        }
         const data = await res.json();
         renderResults(data, query.trim());
     } catch (err) {
         loading.classList.remove('active');
-        errorState.classList.add('active');
+        showError(0);
     }
 }
 
