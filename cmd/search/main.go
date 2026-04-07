@@ -67,13 +67,15 @@ func main() {
 
 	server := &Server{db: conn, embedderURL: cfg.Search.EmbedderURL, timeout: cfg.Search.Timeout, logger: logger}
 	mux.Handle("/metrics", promhttp.Handler())
-
 	mux.HandleFunc("GET /health", server.healthHandler)
-	mux.HandleFunc("GET /search", server.searchHandler)
+
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir("cmd/search/static"))))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "cmd/search/static/index.html")
 	})
+
+	limiter := NewIPRateLimiter(float64(cfg.Search.RateLimit), cfg.Search.RateBurst)
+	mux.HandleFunc("GET /search", limiter.Middleware(server.searchHandler))
 
 	httpServer := &http.Server{Addr: ":" + cfg.Search.Port, Handler: mux}
 
