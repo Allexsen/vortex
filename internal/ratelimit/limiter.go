@@ -44,5 +44,11 @@ func (l *RedisLimiter) Allow(ctx context.Context, key string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return count <= int64(l.limit), nil
+
+	allowed := count <= int64(l.limit)
+	if !allowed {
+		LimitedTotal.Inc()
+	}
+
+	return allowed, nil
 }
