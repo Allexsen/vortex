@@ -11,13 +11,13 @@ import logging
 logger = logging.getLogger(__name__)
 
 MESSAGES_PROCESSED_TOTAL = Counter(
-    "vortex_messages_processed_total",
+    "vortex_embedder_messages_processed_total",
     "Total number of messages processed",
     labelnames=["status"]
 )
 
 MESSAGE_PROCESS_LATENCY = Histogram(
-    "vortex_message_process_latency_seconds",
+    "vortex_embedder_message_process_latency_seconds",
     "Time to process a message",
     buckets=[0.1, 0.25, 0.5, 1, 2.5, 5, 10]
 )
