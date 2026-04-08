@@ -1,6 +1,7 @@
 package infra
 
 import (
+	"fmt"
 	"time"
 
 	"log/slog"
@@ -21,15 +22,60 @@ func SetupRabbitMQ(url string) (*amqp.Connection, *amqp.Channel, error) {
 		time.Sleep(5 * time.Second)
 	}
 	if err != nil {
-		slog.Error("Failed to connect to RabbitMQ after 3 attempts", "error", err)
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("failed to connect to rabbitmq: %w", err)
 	}
 
 	ch, err := conn.Channel()
 	if err != nil {
 		conn.Close()
-		slog.Error("Failed to open a channel", "error", err)
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("failed to open a channel: %w", err)
 	}
 	return conn, ch, nil
+}
+
+func DeclareWithDLQ(ch *amqp.Channel, queueName, dlqName, dlqRoutingKey, dlxExchange string) error {
+	err := ch.ExchangeDeclare(dlxExchange, "direct", true, false, false, false, nil)
+	if err != nil {
+		return fmt.Errorf("failed to declare exchange: %w", err)
+	}
+
+	_, err = ch.QueueDeclare(
+		queueName,
+		true,  // durable
+		false, // delete when unused
+		false, // exclusive
+		false, // no-wait
+		amqp.Table{
+			"x-dead-letter-exchange":    dlxExchange,
+			"x-dead-letter-routing-key": dlqRoutingKey,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to declare queue: %w", err)
+	}
+
+	_, err = ch.QueueDeclare(
+		dlqName,
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to declare dead-letter queue: %w", err)
+	}
+
+	err = ch.QueueBind(
+		dlqName,
+		dlqRoutingKey,
+		dlxExchange,
+		false,
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to bind dead-letter queue: %w", err)
+	}
+
+	return nil
 }

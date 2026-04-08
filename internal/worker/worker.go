@@ -102,62 +102,64 @@ func (w *Worker) Run(runCtx context.Context) error {
 			ctx, cancel := context.WithTimeout(runCtx, w.taskTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER.
 			taskResult, err := w.processTask(ctx, msg.Body)
 			cancel()
-			if err == nil {
-				TasksProcessedTotal.WithLabelValues("success").Inc()
 
-				newTasks := taskResult.NewCrawlTasks
-				slog.Info("Task completed successfully", "worker_id", w.id, "task_id", taskResult.Task.TraceID, "new_tasks", len(newTasks))
+			if err != nil {
+				if errors.Is(err, ErrTransient) {
+					TasksProcessedTotal.WithLabelValues("transient_error").Inc()
 
-				if len(taskResult.Content) > 0 {
-					err = w.publishCrawlResult(runCtx, ch, taskResult)
+					slog.Warn("Requeuing task", "worker_id", w.id, "error", err)
+					taskResult.Task.Attempt++
+					err = w.publish(runCtx, ch, w.frontierQueue, taskResult.Task)
 					if err != nil {
-						slog.Error("Failed to publish crawl result", "worker_id", w.id, "task_id", taskResult.Task.TraceID, "error", err)
+						slog.Error("Failed to requeue task", "worker_id", w.id, "task_id", taskResult.Task.TraceID, "error", err)
 					}
+					msg.Ack(false)
+					continue
 				}
 
-				for _, t := range newTasks {
-					ctx, cancel := context.WithTimeout(runCtx, w.redisTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER.
-					ok, err := w.bloomFilter.CheckAndSet(ctx, t.URL)
-					cancel()
-					if err != nil {
-						slog.Error("Failed to check bloom filter", "worker_id", w.id, "task_id", t.TraceID, "url", t.URL, "error", err)
-						continue
-					}
-
-					if !ok {
-						slog.Debug("URL already seen, skipping", "worker_id", w.id, "task_id", t.TraceID, "url", t.URL)
-						continue
-					}
-
-					err = w.publish(runCtx, ch, w.frontierQueue, t)
-					if err != nil {
-						slog.Error("Failed to publish new task", "worker_id", w.id, "task_id", t.TraceID, "url", t.URL, "error", err)
-						continue
-					}
+				TasksProcessedTotal.WithLabelValues("dropped").Inc()
+				if taskResult != nil {
+					slog.Warn("Dropping task due to permanent error", "worker_id", w.id, "task_id", taskResult.Task.TraceID, "url", taskResult.Task.URL, "error", err)
+				} else {
+					slog.Warn("Dropping task due to permanent error and failed to parse task details", "worker_id", w.id, "error", err)
 				}
-				msg.Ack(false)
+				msg.Nack(false, false)
 				continue
 			}
 
-			if errors.Is(err, ErrTransient) {
-				TasksProcessedTotal.WithLabelValues("transient_error").Inc()
+			TasksProcessedTotal.WithLabelValues("success").Inc()
 
-				slog.Warn("Requeuing task", "worker_id", w.id, "error", err)
-				taskResult.Task.Attempt++
-				err = w.publish(runCtx, ch, w.frontierQueue, taskResult.Task)
+			newTasks := taskResult.NewCrawlTasks
+			slog.Info("Task completed successfully", "worker_id", w.id, "task_id", taskResult.Task.TraceID, "new_tasks", len(newTasks))
+
+			if len(taskResult.Content) > 0 {
+				err = w.publishCrawlResult(runCtx, ch, taskResult)
 				if err != nil {
-					slog.Error("Failed to requeue task", "worker_id", w.id, "task_id", taskResult.Task.TraceID, "error", err)
+					slog.Error("Failed to publish crawl result", "worker_id", w.id, "task_id", taskResult.Task.TraceID, "error", err)
 				}
-				msg.Ack(false)
-				continue
 			}
 
-			TasksProcessedTotal.WithLabelValues("dropped").Inc()
-			if taskResult != nil {
-				slog.Warn("Dropping task due to permanent error", "worker_id", w.id, "task_id", taskResult.Task.TraceID, "url", taskResult.Task.URL, "error", err)
-			} else {
-				slog.Warn("Dropping task due to permanent error and failed to parse task details", "worker_id", w.id, "error", err)
+			for _, t := range newTasks {
+				ctx, cancel := context.WithTimeout(runCtx, w.redisTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER.
+				ok, err := w.bloomFilter.CheckAndSet(ctx, t.URL)
+				cancel()
+				if err != nil {
+					slog.Error("Failed to check bloom filter", "worker_id", w.id, "task_id", t.TraceID, "url", t.URL, "error", err)
+					continue
+				}
+
+				if !ok {
+					slog.Debug("URL already seen, skipping", "worker_id", w.id, "task_id", t.TraceID, "url", t.URL)
+					continue
+				}
+
+				err = w.publish(runCtx, ch, w.frontierQueue, t)
+				if err != nil {
+					slog.Error("Failed to publish new task", "worker_id", w.id, "task_id", t.TraceID, "url", t.URL, "error", err)
+					continue
+				}
 			}
+			slog.Info("Finished processing message", "worker_id", w.id, "task_id", taskResult.Task.TraceID)
 			msg.Ack(false)
 		}
 	}

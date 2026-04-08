@@ -56,30 +56,15 @@ func main() {
 		}
 	}()
 
-	_, err = ch.QueueDeclare(
-		keys.FrontierQueue, // name
-		true,               // durable
-		false,              // delete when unused
-		false,              // exclusive
-		false,              // no-wait
-		nil,                // arguments
-	)
+	err = infra.DeclareWithDLQ(ch, keys.FrontierQueue, keys.FrontierDLQ, keys.FrontierDLQRoutingKey, keys.DeadLetterExchange)
 	if err != nil {
-		logger.Error("Failed to declare frontier queue", "error", err)
+		logger.Error("Failed to declare frontier queue with DLQ", "error", err)
 		os.Exit(1)
 	}
 
-	_, err = ch.QueueDeclare(
-		keys.ProcessingQueue,
-		true,  // durable
-		false, // delete when unused
-		false, // exclusive
-		false, // no-wait
-		nil,   // arguments
-	)
-
+	err = infra.DeclareWithDLQ(ch, keys.ProcessingQueue, keys.ProcessingDLQ, keys.ProcessingDLQRoutingKey, keys.DeadLetterExchange)
 	if err != nil {
-		logger.Error("Failed to declare processing queue", "error", err)
+		logger.Error("Failed to declare processing queue with DLQ", "error", err)
 		os.Exit(1)
 	}
 

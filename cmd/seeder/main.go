@@ -43,16 +43,9 @@ func main() {
 	defer conn.Close()
 	defer ch.Close()
 
-	q, err := ch.QueueDeclare(
-		keys.FrontierQueue, // name
-		true,               // durable
-		false,              // delete when unused
-		false,              // exclusive
-		false,              // no-wait
-		nil,                // arguments
-	)
+	err = infra.DeclareWithDLQ(ch, keys.FrontierQueue, keys.FrontierDLQ, keys.FrontierDLQRoutingKey, keys.DeadLetterExchange)
 	if err != nil {
-		logger.Error("Failed to declare a queue", "error", err)
+		logger.Error("Failed to declare frontier queue with DLQ", "error", err)
 		os.Exit(1)
 	}
 
@@ -94,10 +87,10 @@ func main() {
 
 		ctx, cancel = context.WithTimeout(context.Background(), cfg.Crawler.PublishTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER
 		err = ch.PublishWithContext(ctx,
-			"",     // exchange
-			q.Name, // routing key
-			false,  // mandatory
-			false,  // immediate
+			"",                 // exchange
+			keys.FrontierQueue, // routing key
+			false,              // mandatory
+			false,              // immediate
 			amqp.Publishing{
 				DeliveryMode: amqp.Persistent,
 				ContentType:  "application/json",

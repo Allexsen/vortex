@@ -23,7 +23,10 @@ MESSAGE_PROCESS_LATENCY = Histogram(
 )
 
 
-QUEUE_NAME = "vortex:processing:pending"
+EXCHANGE = "vortex.dlx"
+PROCESSING_QUEUE = "vortex.processing.pending"
+PROCESSING_DLQ = "vortex.processing.dlq"
+PROCESSING_DLQ_ROUTING_KEY = "processing.dead"
 
 class MessageHandler:
     def __init__(self, model, db):
@@ -73,13 +76,27 @@ class Consumer:
         self.connection = connect_to_rabbitmq(url)
         self.channel = self.connection.channel()
 
-        self.channel.queue_declare(queue=QUEUE_NAME, durable=True)
+        self.channel.exchange_declare(exchange=EXCHANGE, exchange_type="direct", durable=True)
+        self.channel.queue_declare(
+            queue=PROCESSING_QUEUE,
+            durable=True,
+            arguments={
+                "x-dead-letter-exchange": EXCHANGE,
+                "x-dead-letter-routing-key": PROCESSING_DLQ_ROUTING_KEY
+            }
+        )
+
+        self.channel.queue_declare(
+            queue=PROCESSING_DLQ,
+            durable=True,
+        )
+        self.channel.queue_bind(queue=PROCESSING_DLQ, exchange=EXCHANGE, routing_key=PROCESSING_DLQ_ROUTING_KEY)
         self.channel.basic_qos(prefetch_count=1)
 
         handler = MessageHandler(self.model, self.db)
-        self.channel.basic_consume(queue=QUEUE_NAME, on_message_callback=handler.handle)
+        self.channel.basic_consume(queue=PROCESSING_QUEUE, on_message_callback=handler.handle)
 
-        logger.info("Waiting for messages on %s", QUEUE_NAME)
+        logger.info("Waiting for messages on %s", PROCESSING_QUEUE)
         try:
             self.channel.start_consuming()
         finally:
