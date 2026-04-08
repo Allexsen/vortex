@@ -341,7 +341,7 @@
       },
       "targets": [
         {
-          "expr": "increase(vortex_messages_processed_total[5m])",
+          "expr": "increase(vortex_embedder_messages_processed_total[5m])",
           "legendFormat": "{{status}}",
           "refId": "A"
         }
