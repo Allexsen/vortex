@@ -25,7 +25,6 @@ type Server struct {
 	db          *pgxpool.Pool
 	embedderURL string
 	timeout     time.Duration
-	logger      *slog.Logger
 }
 
 type SearchResult struct {
@@ -36,20 +35,20 @@ type SearchResult struct {
 
 func main() {
 	const logDir = "logs"
-	logger, cleanupFunc, err := infra.SetupLogger(logDir)
+	cleanupFunc, err := infra.SetupLogger(logDir)
 	if err != nil {
-		logger.Error("Failed to set up logger", "error", err)
+		slog.Error("Failed to set up logger", "error", err)
 		os.Exit(1)
 	}
 	defer cleanupFunc()
 
 	if err := godotenv.Load(); err != nil {
-		logger.Warn("No .env file found, using environment variables")
+		slog.Warn("No .env file found, using environment variables")
 	}
 
 	cfg, err := config.Load()
 	if err != nil {
-		logger.Error("Failed to load configuration", "error", err)
+		slog.Error("Failed to load configuration", "error", err)
 		os.Exit(1)
 	}
 
@@ -58,14 +57,14 @@ func main() {
 
 	conn, err := pgxpool.New(ctx, cfg.Search.PostgresURL)
 	if err != nil {
-		logger.Error("failed to connect to Postgres", "error", err)
+		slog.Error("failed to connect to Postgres", "error", err)
 		os.Exit(1)
 	}
 	defer conn.Close()
 
 	mux := http.NewServeMux()
 
-	server := &Server{db: conn, embedderURL: cfg.Search.EmbedderURL, timeout: cfg.Search.Timeout, logger: logger}
+	server := &Server{db: conn, embedderURL: cfg.Search.EmbedderURL, timeout: cfg.Search.Timeout}
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("GET /health", server.healthHandler)
 
@@ -81,18 +80,18 @@ func main() {
 
 	go func() {
 		<-ctx.Done()
-		logger.Info("Shutting down search server...")
+		slog.Info("Shutting down search server...")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		httpServer.Shutdown(shutdownCtx)
 	}()
 
-	logger.Info("Starting search server", "port", cfg.Search.Port)
+	slog.Info("Starting search server", "port", cfg.Search.Port)
 	if err := httpServer.ListenAndServe(); err != http.ErrServerClosed {
-		logger.Error("Failed to start search server", "error", err)
+		slog.Error("Failed to start search server", "error", err)
 		os.Exit(1)
 	}
-	logger.Info("Search server stopped")
+	slog.Info("Search server stopped")
 }
 
 func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -100,7 +99,7 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if err := s.db.Ping(ctx); err != nil {
-		s.logger.Error("Health check failed", "error", err)
+		slog.Error("Health check failed", "error", err)
 		http.Error(w, "postgres unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -127,7 +126,7 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.logger.Info("Received search request", "query", q)
+	slog.Info("Received search request", "query", q)
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
 	defer cancel()
@@ -135,7 +134,7 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 	embedding, err := s.embed(ctx, q)
 	if err != nil {
 		SearchRequestsTotal.WithLabelValues("error").Inc()
-		s.logger.Error("Failed to get embedding", "error", err)
+		slog.Error("Failed to get embedding", "error", err)
 		http.Error(w, "failed to get embedding", http.StatusInternalServerError)
 		return
 	}
@@ -155,13 +154,13 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 	results, err := s.search(ctx, embedding, limit)
 	if err != nil {
 		SearchRequestsTotal.WithLabelValues("error").Inc()
-		s.logger.Error("Failed to search database", "error", err)
+		slog.Error("Failed to search database", "error", err)
 		http.Error(w, "failed to search database", http.StatusInternalServerError)
 		return
 	}
 
 	SearchRequestsTotal.WithLabelValues("success").Inc()
-	s.logger.Info("Search completed", "query", q, "results", len(results))
+	slog.Info("Search completed", "query", q, "results", len(results))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(results)
