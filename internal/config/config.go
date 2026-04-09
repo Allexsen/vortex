@@ -96,7 +96,7 @@ func Load() (*Config, error) {
 		Crawler: CrawlerConfig{
 			MaxDepth:       getInt("CRAWLER_MAX_DEPTH", 3),
 			RateLimit:      getFloat64("CRAWLER_RATE_LIMIT", 1.0),
-			RateBurst:      getInt("CRAWLER_RATE_BURST", 10),
+			RateBurst:      getInt("CRAWLER_RATE_BURST", 5),
 			CooldownTTL:    getDuration("CRAWLER_COOLDOWN_TTL", 1*time.Second),
 			PollerInterval: getDuration("CRAWLER_POLLER_INTERVAL", 5*time.Second),
 			PublishTimeout: getDuration("CRAWLER_PUBLISH_TIMEOUT", 5*time.Second),
