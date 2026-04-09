@@ -33,6 +33,11 @@ type SearchResult struct {
 	Distance  float64 `json:"distance"`
 }
 
+type SearchResponse struct {
+	RequestID string         `json:"request_id"`
+	Results   []SearchResult `json:"results"`
+}
+
 func main() {
 	const logDir = "logs"
 	cleanupFunc, err := infra.SetupLogger(logDir)
@@ -76,7 +81,7 @@ func main() {
 	limiter := NewIPRateLimiter(float64(cfg.Search.RateLimit), cfg.Search.RateBurst)
 	mux.HandleFunc("GET /search", limiter.Middleware(server.searchHandler))
 
-	httpServer := &http.Server{Addr: ":" + cfg.Search.Port, Handler: mux}
+	httpServer := &http.Server{Addr: ":" + cfg.Search.Port, Handler: requestIDMiddleware(mux)}
 
 	go func() {
 		<-ctx.Done()
@@ -114,6 +119,8 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 		SearchRequestDurationSeconds.Observe(time.Since(start).Seconds())
 	}()
 
+	requestID := getRequestID(r.Context())
+
 	q := r.URL.Query().Get("q")
 	if q == "" {
 		SearchRequestsTotal.WithLabelValues("error").Inc()
@@ -126,7 +133,7 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("Received search request", "query", q)
+	slog.Info("Received search request", "request_id", requestID, "query", q)
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.timeout)
 	defer cancel()
@@ -134,7 +141,7 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 	embedding, err := s.embed(ctx, q)
 	if err != nil {
 		SearchRequestsTotal.WithLabelValues("error").Inc()
-		slog.Error("Failed to get embedding", "error", err)
+		slog.Error("Failed to get embedding", "request_id", requestID, "error", err)
 		http.Error(w, "failed to get embedding", http.StatusInternalServerError)
 		return
 	}
@@ -154,16 +161,19 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 	results, err := s.search(ctx, embedding, limit)
 	if err != nil {
 		SearchRequestsTotal.WithLabelValues("error").Inc()
-		slog.Error("Failed to search database", "error", err)
+		slog.Error("Failed to search database", "request_id", requestID, "error", err)
 		http.Error(w, "failed to search database", http.StatusInternalServerError)
 		return
 	}
 
 	SearchRequestsTotal.WithLabelValues("success").Inc()
-	slog.Info("Search completed", "query", q, "results", len(results))
+	slog.Info("Search completed", "request_id", requestID, "query", q, "results", len(results))
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(results)
+	json.NewEncoder(w).Encode(SearchResponse{
+		Results:   results,
+		RequestID: requestID,
+	})
 }
 
 func (s *Server) embed(ctx context.Context, text string) ([]float32, error) {

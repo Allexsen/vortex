@@ -40,7 +40,7 @@ func (rl *IPRateLimiter) Middleware(next http.HandlerFunc) http.HandlerFunc {
 
 		if !rl.GetLimiter(ip).Allow() {
 			SearchRequestsTotal.WithLabelValues("rate_limited").Inc()
-			slog.Info("rate limit exceeded for IP", "ip", ip)
+			slog.Info("rate limit exceeded for IP", "request_id", getRequestID(r.Context()), "ip", ip)
 			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
