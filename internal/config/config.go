@@ -45,12 +45,12 @@ type RobotsConfig struct {
 }
 
 type CrawlerConfig struct {
-	MaxDepth        int
-	RateLimit       int
-	RateLimitWindow time.Duration
-	CooldownTTL     time.Duration
-	PollerInterval  time.Duration
-	PublishTimeout  time.Duration
+	MaxDepth       int
+	RateLimit      float64
+	RateBurst      int
+	CooldownTTL    time.Duration
+	PollerInterval time.Duration
+	PublishTimeout time.Duration
 }
 
 type FetcherConfig struct {
@@ -94,12 +94,12 @@ func Load() (*Config, error) {
 			DeniedCacheTTL: getDuration("ROBOTS_DENIED_CACHE_TTL", 2*time.Hour),
 		},
 		Crawler: CrawlerConfig{
-			MaxDepth:        getInt("CRAWLER_MAX_DEPTH", 3),
-			RateLimit:       getInt("CRAWLER_RATE_LIMIT", 1),
-			RateLimitWindow: getDuration("CRAWLER_RATE_LIMIT_WINDOW", 1*time.Second),
-			CooldownTTL:     getDuration("CRAWLER_COOLDOWN_TTL", 1*time.Second),
-			PollerInterval:  getDuration("CRAWLER_POLLER_INTERVAL", 5*time.Second),
-			PublishTimeout:  getDuration("CRAWLER_PUBLISH_TIMEOUT", 5*time.Second),
+			MaxDepth:       getInt("CRAWLER_MAX_DEPTH", 3),
+			RateLimit:      getFloat64("CRAWLER_RATE_LIMIT", 1.0),
+			RateBurst:      getInt("CRAWLER_RATE_BURST", 10),
+			CooldownTTL:    getDuration("CRAWLER_COOLDOWN_TTL", 1*time.Second),
+			PollerInterval: getDuration("CRAWLER_POLLER_INTERVAL", 5*time.Second),
+			PublishTimeout: getDuration("CRAWLER_PUBLISH_TIMEOUT", 5*time.Second),
 		},
 		Fetcher: FetcherConfig{
 			Timeout:   getDuration("FETCHER_TIMEOUT", 30*time.Second),
@@ -128,6 +128,20 @@ func getDuration(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return dur
+}
+
+func getFloat64(key string, fallback float64) float64 {
+	val := os.Getenv(key)
+	if val == "" {
+		return fallback
+	}
+
+	f, err := strconv.ParseFloat(val, 64)
+	if err != nil {
+		slog.Error("Invalid float, using fallback", "key", key, "error", err, "fallback", fallback)
+		return fallback
+	}
+	return f
 }
 
 func getInt(key string, fallback int) int {

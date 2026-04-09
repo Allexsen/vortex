@@ -3,54 +3,48 @@ package ratelimit_test
 import (
 	"context"
 	"testing"
-	"time"
 	"vortex/internal/ratelimit"
 
 	"github.com/redis/go-redis/v9"
 )
 
 type mockRedisClient struct {
-	cmds []redis.Cmder
-	err  error
+	result int64
+	err    error
 }
 
-func (m *mockRedisClient) TxPipelined(ctx context.Context, fn func(pipe redis.Pipeliner) error) ([]redis.Cmder, error) {
-	return m.cmds, m.err
+func (m *mockRedisClient) Eval(ctx context.Context, script string, keys []string, args ...interface{}) *redis.Cmd {
+	cmd := redis.NewCmd(ctx)
+	if m.err != nil {
+		cmd.SetErr(m.err)
+	} else {
+		cmd.SetVal(m.result)
+	}
+	return cmd
 }
 
 func TestAllow(t *testing.T) {
 	tests := []struct {
 		name      string
-		count     int64
-		limit     int
-		txErr     error
-		cmdErr    error
+		allowed   int64
+		err       error
 		wantAllow bool
 		wantErr   bool
 	}{
-		{"within limit", 3, 5, nil, nil, true, false},
-		{"at limit", 5, 5, nil, nil, true, false},
-		{"exceeds limit", 6, 5, nil, nil, false, false},
-		{"redis error", 0, 5, redis.ErrClosed, nil, false, true},
-		{"cmd error", 0, 5, nil, redis.ErrInvalidCommand, false, true},
+		{"allowed", 1, nil, true, false},
+		{"denied", 0, nil, false, false},
+		{"redis error", 0, redis.ErrClosed, false, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd := redis.NewIntCmd(context.Background())
-			if tt.cmdErr == nil {
-				cmd.SetVal(tt.count)
-			} else {
-				cmd.SetErr(tt.cmdErr)
-			}
-
 			mockClient := &mockRedisClient{
-				cmds: []redis.Cmder{cmd},
-				err:  tt.txErr,
+				result: tt.allowed,
+				err:    tt.err,
 			}
 
-			limiter := ratelimit.NewRedisLimiter(mockClient, "test", tt.limit, time.Minute)
-			allow, err := limiter.Allow(context.Background(), "example.com")
+			mockLimiter := ratelimit.NewRedisLimiter(mockClient, "test", 0, 0)
+			allow, err := mockLimiter.Allow(context.Background(), "example.com")
 
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Allow() error = %v, wantErr %v", err, tt.wantErr)
