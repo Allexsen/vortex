@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -244,4 +246,69 @@ func TestCanCrawlCachesEmptyOnNoRobotsTxt(t *testing.T) {
 	if len(cached) != 0 {
 		t.Errorf("expected empty cached value, got %q", string(cached))
 	}
+}
+
+func TestCanCrawlConcurrentFetchDedup(t *testing.T) {
+	robotsTxt := []byte("User-agent: *\nAllow: /")
+	var fetchCount atomic.Int32
+
+	// blockingFetcher blocks until gate is opened, then returns robots.txt.
+	// Tracks how many times Fetch is called.
+	gate := make(chan struct{})
+	fetcher := &mockFetcher{data: map[string][]byte{"https://example.com/robots.txt": robotsTxt}}
+
+	cache := newMockCache()
+	engine := NewEtiquetteEngine(cache, &countingFetcher{
+		inner:      fetcher,
+		count:      &fetchCount,
+		gate:       gate,
+	}, "TestBot", 24*time.Hour, 2*time.Hour)
+
+	const goroutines = 3
+	var wg sync.WaitGroup
+	results := make([]bool, goroutines)
+	errs := make([]error, goroutines)
+
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			allowed, _, err := engine.CanCrawl(context.Background(), "https://example.com/page")
+			results[idx] = allowed
+			errs[idx] = err
+		}(i)
+	}
+
+	// Give goroutines time to hit the inflight map
+	time.Sleep(50 * time.Millisecond)
+
+	// Release the fetch
+	close(gate)
+	wg.Wait()
+
+	for i := 0; i < goroutines; i++ {
+		if errs[i] != nil {
+			t.Errorf("goroutine %d: unexpected error: %v", i, errs[i])
+		}
+		if !results[i] {
+			t.Errorf("goroutine %d: expected allowed=true", i)
+		}
+	}
+
+	if n := fetchCount.Load(); n != 1 {
+		t.Errorf("expected 1 fetch call, got %d", n)
+	}
+}
+
+// countingFetcher wraps a Fetcher, blocks on a gate channel, and counts calls.
+type countingFetcher struct {
+	inner Fetcher
+	count *atomic.Int32
+	gate  chan struct{}
+}
+
+func (f *countingFetcher) Fetch(ctx context.Context, url string) ([]byte, error) {
+	f.count.Add(1)
+	<-f.gate
+	return f.inner.Fetch(ctx, url)
 }
