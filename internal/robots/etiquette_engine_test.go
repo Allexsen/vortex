@@ -61,15 +61,15 @@ func TestCanCrawl(t *testing.T) {
 	withDelay := []byte("User-agent: TestBot\nCrawl-delay: 2\nAllow: /")
 
 	tests := []struct {
-		name       string
-		url        string
-		cacheData  map[string][]byte
-		fetchData  map[string][]byte
-		fetchErr   error
-		cacheErr   error
-		wantAllow  bool
-		wantDelay  time.Duration
-		wantErr    bool
+		name      string
+		url       string
+		cacheData map[string][]byte
+		fetchData map[string][]byte
+		fetchErr  error
+		cacheErr  error
+		wantAllow bool
+		wantDelay time.Duration
+		wantErr   bool
 	}{
 		{
 			name:      "cache hit - allowed",
@@ -108,9 +108,9 @@ func TestCanCrawl(t *testing.T) {
 			wantAllow: true,
 		},
 		{
-			name:     "cache miss - fetch returns ErrAccessDenied",
-			url:      "https://example.com/page",
-			fetchErr: fmt.Errorf("%w: 403", ErrAccessDenied),
+			name:      "cache miss - fetch returns ErrAccessDenied",
+			url:       "https://example.com/page",
+			fetchErr:  fmt.Errorf("%w: 403", ErrAccessDenied),
 			wantAllow: false,
 		},
 		{
@@ -259,9 +259,9 @@ func TestCanCrawlConcurrentFetchDedup(t *testing.T) {
 
 	cache := newMockCache()
 	engine := NewEtiquetteEngine(cache, &countingFetcher{
-		inner:      fetcher,
-		count:      &fetchCount,
-		gate:       gate,
+		inner: fetcher,
+		count: &fetchCount,
+		gate:  gate,
 	}, "TestBot", 24*time.Hour, 2*time.Hour)
 
 	const goroutines = 3
