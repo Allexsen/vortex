@@ -80,7 +80,7 @@ func main() {
 		}
 	}()
 
-	limiter := ratelimit.NewRedisLimiter(rdb, keys.RateLimitPrefix, cfg.Crawler.RateLimit, cfg.Crawler.RateLimitWindow)
+	limiter := ratelimit.NewRedisLimiter(rdb, keys.RateLimitPrefix, cfg.Crawler.RateLimit, cfg.Crawler.RateBurst)
 	queue := cooldown.NewRedisQueue(rdb, keys.CooldownQueue)
 
 	httpClient := &http.Client{Timeout: cfg.Robots.HTTPTimeout}
