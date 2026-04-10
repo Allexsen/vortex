@@ -2,6 +2,8 @@ Below is an AI-generated readme (unlike code :D). Some details are a TINY bit ah
 
 I will update & cleanup the readme myself once every major component is done, the load-test is ran, analyzed & design doc written out. Estimated ~April 10-11.
 
+UPDATE APR 10: Load test has been run. Good findings. Design doc will be out Apr 11.
+
 # Vortex
 
 A distributed web crawler and semantic search engine. Go handles crawling, orchestration, and HTTP serving; Python handles transformer-based text embeddings. Results are stored as dense vectors in Postgres (pgvector) and served through a cosine-similarity search API.
