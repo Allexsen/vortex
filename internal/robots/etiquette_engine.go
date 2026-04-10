@@ -56,6 +56,7 @@ func (e *EtiquetteEngine) CanCrawl(ctx context.Context, rawURL string) (bool, ti
 	e.mu.Lock()
 	entry, exists := e.inflight[domain]
 	if exists {
+		InflightDedupTotal.Inc()
 		e.mu.Unlock()
 		<-entry.done
 	} else if !exists {
@@ -75,12 +76,14 @@ func (e *EtiquetteEngine) CanCrawl(ctx context.Context, rawURL string) (bool, ti
 	}
 
 	if string(entry.data) == string(deniedMarker) {
+		CanCrawlTotal.WithLabelValues("denied").Inc()
 		slog.Info("Domain access denied by robots.txt", "domain", domain)
 		return false, 0, nil
 	}
 
 	rules, err := robotstxt.FromBytes(entry.data)
 	if err != nil {
+		CanCrawlTotal.WithLabelValues("parse_error").Inc()
 		slog.Warn("Parsing error, defaulting to allow", "domain", domain, "error", err)
 		return true, 0, nil
 	}
@@ -88,6 +91,12 @@ func (e *EtiquetteEngine) CanCrawl(ctx context.Context, rawURL string) (bool, ti
 	group := rules.FindGroup(e.userAgent)
 	allowed := group.Test(path)
 	crawlDelay := group.CrawlDelay
+	if allowed {
+		CanCrawlTotal.WithLabelValues("allowed").Inc()
+	} else {
+		CanCrawlTotal.WithLabelValues("denied").Inc()
+	}
+
 	return allowed, crawlDelay, nil
 }
 
@@ -117,7 +126,11 @@ func (e *EtiquetteEngine) fetchOnce(ctx context.Context, domain string, parsedUR
 		e.mu.Unlock()
 	}()
 
-	if data == nil {
+	if data != nil {
+		CacheResultTotal.WithLabelValues("hit").Inc()
+		return
+	} else {
+		CacheResultTotal.WithLabelValues("miss").Inc()
 		robotsURL := url.URL{
 			Scheme: parsedURL.Scheme,
 			Host:   parsedURL.Hostname(),
