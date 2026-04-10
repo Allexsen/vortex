@@ -108,8 +108,12 @@ async function doSearch(query) {
             return;
         }
         const data = await res.json();
-        renderResults(data, query.trim());
+        if (data.request_id) {
+            console.debug('search request_id:', data.request_id);
+        }
+        renderResults(data.results, query.trim());
     } catch (err) {
+        console.error('search failed:', err);
         loading.classList.remove('active');
         showError(0);
     }
