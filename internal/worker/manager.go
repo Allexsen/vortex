@@ -22,6 +22,7 @@ type Manager struct {
 
 	conn               *amqp.Connection
 	controlKey         string
+	frontierQueue      string
 	processingQueue    string
 	pollInterval       time.Duration
 	processingPauseAt  int
@@ -29,7 +30,7 @@ type Manager struct {
 }
 
 func NewManager(rdb RedisClient, conn *amqp.Connection,
-	controlKey, processingQueue string,
+	controlKey, frontierQueue, processingQueue string,
 	redisTimeout, pollInterval time.Duration,
 	processingPauseAt, processingResumeAt int) *Manager {
 	return &Manager{
@@ -37,6 +38,7 @@ func NewManager(rdb RedisClient, conn *amqp.Connection,
 		redisTimeout:       redisTimeout,
 		conn:               conn,
 		controlKey:         controlKey,
+		frontierQueue:      frontierQueue,
 		processingQueue:    processingQueue,
 		pollInterval:       pollInterval,
 		processingPauseAt:  processingPauseAt,
@@ -85,12 +87,12 @@ func (m *Manager) tick(ctx context.Context) {
 	switch val {
 	case "pause":
 		if m.gate.Load() == nil {
-			m.pause()
+			m.pause("manual")
 			slog.Info("manager: paused (manual control)")
 		}
 	case "resume":
 		if m.gate.Load() != nil {
-			m.resume()
+			m.resume("manual")
 			slog.Info("manager: resumed (manual control)")
 		}
 	default:
@@ -105,33 +107,50 @@ func (m *Manager) tick(ctx context.Context) {
 		}
 		defer ch.Close()
 
-		q, err := ch.QueueDeclarePassive(m.processingQueue, true, false, false, false, nil)
+		qFrontier, err := ch.QueueDeclarePassive(m.frontierQueue, true, false, false, false, nil)
 		if err != nil {
-			slog.Error("manager: queue inspect failed", "error", err)
+			slog.Error("manager: frontier queue inspect failed", "error", err)
 			return
 		}
 
-		depth := q.Messages
+		qProcessing, err := ch.QueueDeclarePassive(m.processingQueue, true, false, false, false, nil)
+		if err != nil {
+			slog.Error("manager: processing queue inspect failed", "error", err)
+			return
+		}
+
+		frontierDepth := qFrontier.Messages
+		FrontierQueueDepth.Set(float64(frontierDepth))
+
+		processingDepth := qProcessing.Messages
+		ProcessingQueueDepth.Set(float64(processingDepth))
+
 		paused := m.gate.Load() != nil
 
 		switch {
-		case !paused && depth >= m.processingPauseAt:
-			m.pause()
-			slog.Info("manager: paused (auto)", "depth", depth, "threshold", m.processingPauseAt)
-		case paused && depth <= m.processingResumeAt:
-			m.resume()
-			slog.Info("manager: resumed (auto)", "depth", depth, "threshold", m.processingResumeAt)
+		case !paused && processingDepth >= m.processingPauseAt:
+			m.pause("auto")
+			slog.Info("manager: paused (auto)", "depth", processingDepth, "threshold", m.processingPauseAt)
+		case paused && processingDepth <= m.processingResumeAt:
+			m.resume("auto")
+			slog.Info("manager: resumed (auto)", "depth", processingDepth, "threshold", m.processingResumeAt)
 		}
 	}
 }
 
 // NOT THREAD-SAFE: Call only from the manager's main loop
-func (m *Manager) pause() {
+func (m *Manager) pause(reason string) {
+	ManagerThrottleTotal.WithLabelValues("pause", reason).Inc()
+	ManagerPaused.Set(1)
+
 	gate := make(chan struct{})
 	m.gate.Store(&gate)
 }
 
-func (m *Manager) resume() {
+func (m *Manager) resume(reason string) {
+	ManagerThrottleTotal.WithLabelValues("resume", reason).Inc()
+	ManagerPaused.Set(0)
+
 	oldGate := m.gate.Swap(nil)
 	if oldGate != nil {
 		close(*oldGate)

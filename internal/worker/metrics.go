@@ -41,4 +41,32 @@ var (
 		Name:      "cooldown_republished_total",
 		Help:      "Total tasks republished from cooldown queue.",
 	})
+
+	ManagerThrottleTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "vortex",
+		Subsystem: "worker",
+		Name:      "manager_throttle_total",
+		Help:      "Total tasks throttled by the manager.",
+	}, []string{"action", "reason"})
+
+	ManagerPaused = promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: "vortex",
+		Subsystem: "worker",
+		Name:      "manager_paused",
+		Help:      "Whether the manager is currently paused (1 for paused, 0 for running).",
+	})
+
+	FrontierQueueDepth = promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: "vortex",
+		Subsystem: "worker",
+		Name:      "frontier_queue_depth",
+		Help:      "Current number of messages in the frontier queue.",
+	})
+
+	ProcessingQueueDepth = promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: "vortex",
+		Subsystem: "worker",
+		Name:      "processing_queue_depth",
+		Help:      "Current number of messages in the processing queue.",
+	})
 )
