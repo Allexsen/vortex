@@ -135,11 +135,14 @@ services:
     depends_on:
       message_broker:
         condition: service_healthy
+      state_store:
+        condition: service_healthy
       vector_store:
         condition: service_healthy
     environment:
       RABBITMQ_URL: amqp://guest:guest@message_broker:5672/
       POSTGRES_URL: postgresql://vortex:vortex@vector_store:5432/vortex
+      REDIS_ADDR: state_store:6379
     deploy:
       resources:
         limits:

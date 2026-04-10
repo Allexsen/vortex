@@ -7,3 +7,4 @@ fastapi>=0.115.0
 uvicorn>=0.34.0
 prometheus_client>=0.24.1
 python-json-logger>=2.0.0,<3.0.0
+redis>=5.0.0

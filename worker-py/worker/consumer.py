@@ -3,6 +3,8 @@ import sys
 import time
 import pika
 import json
+
+import redis
 from . import chunker
 from prometheus_client import Counter, Histogram
 
@@ -23,17 +25,35 @@ MESSAGE_PROCESS_LATENCY = Histogram(
 )
 
 
+CONTROL_KEY = "vortex:control:embedder"
+
 EXCHANGE = "vortex.dlx"
 PROCESSING_QUEUE = "vortex.processing.pending"
 PROCESSING_DLQ = "vortex.processing.dlq"
 PROCESSING_DLQ_ROUTING_KEY = "processing.dead"
 
+
 class MessageHandler:
-    def __init__(self, model, db):
+    def __init__(self, model, db, redis_client):
         self.model = model
         self.db = db
+        self.redis_client = redis_client
     
+    def _wait_if_paused(self, channel):
+        while True:
+            try:
+                value = self.redis_client.get(CONTROL_KEY)
+            except redis.RedisError as e:
+                logger.warning("Failed to read embedder control key: %s", e)
+                return # fail-open: if Redis is unavailable, don't block processing
+            
+            if value != b"pause":
+                return
+            channel.connection.sleep(1.0)
+
     def handle(self, channel, method, properties, body):
+        self._wait_if_paused(channel)
+
         start = time.time()
 
         data = json.loads(body)
@@ -93,7 +113,17 @@ class Consumer:
         self.channel.queue_bind(queue=PROCESSING_DLQ, exchange=EXCHANGE, routing_key=PROCESSING_DLQ_ROUTING_KEY)
         self.channel.basic_qos(prefetch_count=1)
 
-        handler = MessageHandler(self.model, self.db)
+        redis_addr = os.getenv("REDIS_ADDR", "localhost:6379")
+        redis_host, redis_port = redis_addr.split(":", 1)
+        redis_client = redis.Redis(
+            host=redis_host,
+            port=int(redis_port),
+            db=int(os.getenv("REDIS_DB", "0")),
+            password=os.getenv("REDIS_PASSWORD", ""),
+            socket_timeout=2.0
+        )
+
+        handler = MessageHandler(self.model, self.db, redis_client)
         self.channel.basic_consume(queue=PROCESSING_QUEUE, on_message_callback=handler.handle)
 
         logger.info("Waiting for messages on %s", PROCESSING_QUEUE)

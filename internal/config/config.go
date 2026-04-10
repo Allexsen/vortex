@@ -11,6 +11,7 @@ type Config struct {
 	RabbitMQ RabbitMQConfig
 	Redis    RedisConfig
 	Worker   WorkerConfig
+	Manager  ManagerConfig
 	Robots   RobotsConfig
 	Crawler  CrawlerConfig
 	Fetcher  FetcherConfig
@@ -34,6 +35,12 @@ type WorkerConfig struct {
 	TaskTimeout  time.Duration
 	RedisTimeout time.Duration
 	MetricsPort  string
+}
+
+type ManagerConfig struct {
+	PollInterval       time.Duration
+	ProcessingPauseAt  int
+	ProcessingResumeAt int
 }
 
 type RobotsConfig struct {
@@ -85,6 +92,11 @@ func Load() (*Config, error) {
 			TaskTimeout:  getDuration("WORKER_TASK_TIMEOUT", 60*time.Second),
 			RedisTimeout: getDuration("WORKER_REDIS_TIMEOUT", 5*time.Second),
 			MetricsPort:  getString("WORKER_METRICS_PORT", "2112"),
+		},
+		Manager: ManagerConfig{
+			PollInterval:       getDuration("MANAGER_POLL_INTERVAL", 2*time.Second),
+			ProcessingPauseAt:  getInt("MANAGER_PROCESSING_PAUSE_AT", 5000),
+			ProcessingResumeAt: getInt("MANAGER_PROCESSING_RESUME_AT", 2500),
 		},
 		Robots: RobotsConfig{
 			UserAgent:      getString("ROBOTS_USER_AGENT", "VortexBot"),

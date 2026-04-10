@@ -12,6 +12,10 @@ import (
 
 // --- Mocks ---
 
+type noopPauser struct{}
+
+func (p noopPauser) WaitIfPaused(ctx context.Context) {}
+
 type mockLimiter struct {
 	allow bool
 	err   error
@@ -87,10 +91,11 @@ func marshalTask(t *testing.T, task models.CrawlTask) []byte {
 func newTestWorker(limiter Limiter, queue CooldownQueue, robots EtiquetteEngine, f Fetcher, bloom BloomFilter) *Worker {
 	return NewWorker(
 		"test-worker",
-		nil, // conn not used by processTask
+		nil,          // conn not used by processTask
+		noopPauser{}, // pauser not used by processTask
 		limiter, queue, robots, f, bloom,
-		3,  // maxDepth
-		3,  // maxRetries
+		3, // maxDepth
+		3, // maxRetries
 		5*time.Second, 5*time.Second, 30*time.Second, 1*time.Second,
 		"frontier", "processing",
 	)

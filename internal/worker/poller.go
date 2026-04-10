@@ -11,16 +11,18 @@ import (
 )
 
 type Poller struct {
-	queue CooldownQueue
-	conn  *amqp.Connection
+	queue  CooldownQueue
+	conn   *amqp.Connection
+	pauser Pauser
 
 	pollerInterval time.Duration
 }
 
-func NewPoller(queue CooldownQueue, conn *amqp.Connection, pollerInterval time.Duration) *Poller {
+func NewPoller(queue CooldownQueue, conn *amqp.Connection, pauser Pauser, pollerInterval time.Duration) *Poller {
 	return &Poller{
 		queue:          queue,
 		conn:           conn,
+		pauser:         pauser,
 		pollerInterval: pollerInterval,
 	}
 }
@@ -42,6 +44,8 @@ func (p *Poller) Run(ctx context.Context) {
 			slog.Info("Poller shutting down...")
 			return
 		case <-ticker.C:
+			p.pauser.WaitIfPaused(ctx)
+
 			tasks, err := p.queue.PopExpired(ctx)
 			if err != nil {
 				slog.Error("Failed to pop expired tasks", "error", err)

@@ -6,6 +6,8 @@ const (
 	RobotsCachePrefix = "vortex:frontier:robots:"
 	RateLimitPrefix   = "vortex:frontier:limit:"
 
+	ControlCrawler = "vortex:control:crawler"
+
 	DeadLetterExchange    = "vortex.dlx"
 	FrontierQueue         = "vortex.frontier.pending"
 	FrontierDLQ           = "vortex.frontier.dlq"
