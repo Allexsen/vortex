@@ -1,4 +1,4 @@
-Below is an AI-generated readme (:D). Some details are a TINY bit ahead of the current repo state, but most of them are correct.
+Below is an AI-generated readme (unlike code :D). Some details are a TINY bit ahead of the current repo state, but most of them are correct.
 
 I will update & cleanup the readme myself once every major component is done, the load-test is ran, analyzed & design doc written out. Estimated ~April 10-11.
 
