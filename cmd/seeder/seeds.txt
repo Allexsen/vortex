@@ -1,0 +1,47 @@
+# --- Engineering Blogs (High text signal, cross-linking) ---
+https://blog.cloudflare.com/
+https://engineering.fb.com/
+https://netflixtechblog.com/
+https://stripe.com/blog
+https://discord.com/category/engineering
+https://github.blog/category/engineering/
+https://uber.com/en-US/blog/engineering/
+https://dropbox.tech/
+https://canvatechblog.com/
+https://slack.engineering/
+
+# --- Open Source & Documentation (Dense text, deep links) ---
+https://go.dev/doc/
+https://docs.python.org/3/
+https://kubernetes.io/docs/home/
+https://react.dev/blog
+https://developer.mozilla.org/en-US/docs/Web
+https://www.rust-lang.org/learn
+https://postgrespro.com/blog/
+https://nginx.org/en/docs/
+https://redis.io/docs/
+https://kafka.apache.org/documentation/
+
+# --- Academic & Research (Long-form content for chunking tests) ---
+https://bair.berkeley.edu/blog/
+https://ai.googleblog.com/
+https://machinelearning.apple.com/
+https://openai.com/research/
+https://www.deepmind.com/blog
+https://distill.pub/
+https://arxiv.org/list/cs.AI/recent
+https://news.mit.edu/topic/computer-science
+https://techcrunch.com/category/artificial-intelligence/
+https://www.nature.com/subjects/computer-science
+
+# --- Tech News & Aggregators (Massive outbound link generation) ---
+https://news.ycombinator.com/
+https://lobste.rs/
+https://arstechnica.com/gadgets/
+https://www.theverge.com/tech
+https://www.wired.com/category/tech/
+https://restofworld.org/
+https://www.technologyreview.com/
+https://pluralistic.net/
+https://daringfireball.net/
+https://stratechery.com/

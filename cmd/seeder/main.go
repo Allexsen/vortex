@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 	"vortex/internal/cache"
 	"vortex/internal/config"
@@ -58,12 +61,16 @@ func main() {
 
 	bf := cache.NewBloomFilter(rdb, keys.SeenBloomFilter)
 
-	// TODO: Actual user input for seed URLs instead of hardcoding
-	for i := 1; i <= 1; i++ {
+	seedURLs, err := getSeederDomains()
+	if err != nil {
+		slog.Error("Failed to get seed URLs", "error", err)
+		os.Exit(1)
+	}
+
+	for _, url := range seedURLs {
 		task := models.CrawlTask{
-			TraceID: uuid.New().String(),
-			// URL:        "https://dummy.url/" + strconv.Itoa(i),
-			URL:        "https://go.dev",
+			TraceID:    uuid.New().String(),
+			URL:        url,
 			Attempt:    0,
 			EnqueuedAt: time.Now(),
 			Depth:      0,
@@ -106,4 +113,28 @@ func main() {
 		}
 		slog.Info("Task published", "task_id", task.TraceID, "url", task.URL, "time", task.EnqueuedAt.Format(time.RFC3339))
 	}
+}
+
+//go:embed seeds.txt
+var seedsPayload string
+
+// getSeederDomains reads the embedded text file line by line.
+func getSeederDomains() ([]string, error) {
+	var urls []string
+
+	scanner := bufio.NewScanner(strings.NewReader(seedsPayload))
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		urls = append(urls, line)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	return urls, nil
 }
