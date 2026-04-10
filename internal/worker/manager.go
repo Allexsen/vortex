@@ -87,16 +87,12 @@ func (m *Manager) tick(ctx context.Context) {
 	switch val {
 	case "pause":
 		if m.gate.Load() == nil {
-			m.pause()
-			ManagerThrottleTotal.WithLabelValues("pause", "manual").Inc()
-			ManagerPaused.Set(1)
+			m.pause("manual")
 			slog.Info("manager: paused (manual control)")
 		}
 	case "resume":
 		if m.gate.Load() != nil {
-			m.resume()
-			ManagerThrottleTotal.WithLabelValues("resume", "manual").Inc()
-			ManagerPaused.Set(0)
+			m.resume("manual")
 			slog.Info("manager: resumed (manual control)")
 		}
 	default:
@@ -133,26 +129,28 @@ func (m *Manager) tick(ctx context.Context) {
 
 		switch {
 		case !paused && processingDepth >= m.processingPauseAt:
-			m.pause()
-			ManagerThrottleTotal.WithLabelValues("pause", "auto").Inc()
-			ManagerPaused.Set(1)
+			m.pause("auto")
 			slog.Info("manager: paused (auto)", "depth", processingDepth, "threshold", m.processingPauseAt)
 		case paused && processingDepth <= m.processingResumeAt:
-			m.resume()
-			ManagerThrottleTotal.WithLabelValues("resume", "auto").Inc()
-			ManagerPaused.Set(0)
+			m.resume("auto")
 			slog.Info("manager: resumed (auto)", "depth", processingDepth, "threshold", m.processingResumeAt)
 		}
 	}
 }
 
 // NOT THREAD-SAFE: Call only from the manager's main loop
-func (m *Manager) pause() {
+func (m *Manager) pause(reason string) {
+	ManagerThrottleTotal.WithLabelValues("pause", reason).Inc()
+	ManagerPaused.Set(1)
+
 	gate := make(chan struct{})
 	m.gate.Store(&gate)
 }
 
-func (m *Manager) resume() {
+func (m *Manager) resume(reason string) {
+	ManagerThrottleTotal.WithLabelValues("resume", reason).Inc()
+	ManagerPaused.Set(0)
+
 	oldGate := m.gate.Swap(nil)
 	if oldGate != nil {
 		close(*oldGate)
