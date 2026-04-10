@@ -102,7 +102,7 @@ func (w *Worker) Run(runCtx context.Context) error {
 
 			w.pauser.WaitIfPaused(runCtx) // Check if we should pause processing before handling the message
 
-			slog.Info("Received a message", "worker_id", w.id, "body", msg.Body)
+			slog.Info("Received a message", "worker_id", w.id)
 
 			ctx, cancel := context.WithTimeout(runCtx, w.taskTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER.
 			taskResult, err := w.processTask(ctx, msg.Body)
