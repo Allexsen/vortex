@@ -10,6 +10,10 @@ type EtiquetteEngine interface {
 	CanCrawl(ctx context.Context, url string) (bool, time.Duration, error)
 }
 
+type Pauser interface {
+	WaitIfPaused(ctx context.Context)
+}
+
 type Fetcher interface {
 	Fetch(ctx context.Context, url string) ([]byte, error)
 }

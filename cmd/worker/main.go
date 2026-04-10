@@ -104,12 +104,25 @@ func main() {
 	wg := &sync.WaitGroup{}
 	infra.StartMetricsServer(ctx, wg, cfg.Worker.MetricsPort)
 
+	manager := worker.NewManager(
+		rdb, conn, keys.ControlCrawler, keys.ProcessingQueue,
+		cfg.Worker.RedisTimeout, cfg.Manager.PollInterval,
+		cfg.Manager.ProcessingPauseAt, cfg.Manager.ProcessingResumeAt,
+	)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		manager.Run(ctx)
+		slog.Info("Manager stopped gracefully")
+	}()
+
 	wg.Add(cfg.Worker.Count)
 	for i := 1; i <= cfg.Worker.Count; i++ {
 		go func() {
 			defer wg.Done()
 			w := worker.NewWorker(fmt.Sprintf("worker-%d", i),
-				conn, limiter, queue, robots, fetcher, bloomFilter,
+				conn, manager, limiter, queue, robots, fetcher, bloomFilter,
 				cfg.Crawler.MaxDepth, cfg.Worker.MaxRetries,
 				cfg.Crawler.PublishTimeout, cfg.Worker.RedisTimeout, cfg.Worker.TaskTimeout, cfg.Crawler.CooldownTTL,
 				keys.FrontierQueue, keys.ProcessingQueue,
@@ -123,7 +136,7 @@ func main() {
 	}
 
 	wg.Add(1)
-	p := worker.NewPoller(queue, conn, cfg.Crawler.PollerInterval)
+	p := worker.NewPoller(queue, conn, manager, cfg.Crawler.PollerInterval)
 	go func() {
 		defer wg.Done()
 		p.Run(ctx)

@@ -20,6 +20,7 @@ type Worker struct {
 	id string
 
 	conn        *amqp.Connection
+	pauser      Pauser
 	limiter     Limiter
 	queue       CooldownQueue
 	robots      EtiquetteEngine
@@ -37,7 +38,7 @@ type Worker struct {
 	processingQueue string
 }
 
-func NewWorker(id string, conn *amqp.Connection, limiter Limiter, queue CooldownQueue,
+func NewWorker(id string, conn *amqp.Connection, pauser Pauser, limiter Limiter, queue CooldownQueue,
 	robots EtiquetteEngine, fetcher Fetcher, bloomFilter BloomFilter,
 	maxDepth, maxRetries int,
 	publishTimeout, redisTimeout, taskTimeout, cooldownTTL time.Duration,
@@ -45,6 +46,7 @@ func NewWorker(id string, conn *amqp.Connection, limiter Limiter, queue Cooldown
 	return &Worker{
 		id:              id,
 		conn:            conn,
+		pauser:          pauser,
 		limiter:         limiter,
 		queue:           queue,
 		robots:          robots,
@@ -97,6 +99,9 @@ func (w *Worker) Run(runCtx context.Context) error {
 				slog.Info("Message channel closed", "worker_id", w.id)
 				return nil
 			}
+
+			w.pauser.WaitIfPaused(runCtx) // Check if we should pause processing before handling the message
+
 			slog.Info("Received a message", "worker_id", w.id, "body", msg.Body)
 
 			ctx, cancel := context.WithTimeout(runCtx, w.taskTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER.
