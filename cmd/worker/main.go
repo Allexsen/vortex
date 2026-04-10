@@ -105,7 +105,7 @@ func main() {
 	infra.StartMetricsServer(ctx, wg, cfg.Worker.MetricsPort)
 
 	manager := worker.NewManager(
-		rdb, conn, keys.ControlCrawler, keys.ProcessingQueue,
+		rdb, conn, keys.ControlCrawler, keys.FrontierQueue, keys.ProcessingQueue,
 		cfg.Worker.RedisTimeout, cfg.Manager.PollInterval,
 		cfg.Manager.ProcessingPauseAt, cfg.Manager.ProcessingResumeAt,
 	)
