@@ -2,6 +2,7 @@ package infra
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 	"vortex/internal/cache"
@@ -9,10 +10,10 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func SetupRedis(addr, password string, db, poolSize int, timeout time.Duration) (*redis.Client, error) {
+func SetupRedis(addr, password string, db, poolSize int, timeout time.Duration, maxRetries int, retryDelay time.Duration) (*redis.Client, error) {
 	var err error
 	rdb := cache.NewRedisClient(addr, password, db, poolSize)
-	for i := 1; i <= 3; i++ {
+	for i := 1; i <= maxRetries; i++ {
 		ctx, cancel := context.WithTimeout(context.Background(), timeout) // MUST CANCEL MANUALLY; DO NOT DEFER
 		err = rdb.Ping(ctx).Err()
 		cancel()
@@ -21,10 +22,10 @@ func SetupRedis(addr, password string, db, poolSize int, timeout time.Duration) 
 			return rdb, nil
 		}
 
-		slog.Warn("Redis not ready.. attempting to reconnect in 5s", "attempt", i, "error", err)
-		time.Sleep(5 * time.Second)
+		slog.Warn(fmt.Sprintf("Redis not ready.. attempting to reconnect in %v", retryDelay), "attempt", i, "error", err)
+		time.Sleep(retryDelay)
 	}
 
-	slog.Error("Failed to connect to Redis after 3 attempts", "error", err)
+	slog.Error(fmt.Sprintf("Failed to connect to Redis after %d attempts", maxRetries), "error", err)
 	return nil, err
 }

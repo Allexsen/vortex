@@ -21,8 +21,7 @@ import (
 )
 
 func main() {
-	const logDir = "logs"
-	cleanupFunc, err := infra.SetupLogger(logDir)
+	cleanupFunc, err := infra.SetupLogger("seeder")
 	if err != nil {
 		slog.Error("Failed to set up logger", "error", err)
 		os.Exit(1)
@@ -39,7 +38,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	conn, ch, err := infra.SetupRabbitMQ(cfg.RabbitMQ.URL)
+	conn, ch, err := infra.SetupRabbitMQ(cfg.RabbitMQ.URL, cfg.RabbitMQ.MaxRetries, cfg.RabbitMQ.RetryDelay)
 	if err != nil {
 		slog.Error("Failed to set up RabbitMQ", "error", err)
 		os.Exit(1)
@@ -53,7 +52,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	rdb, err := infra.SetupRedis(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, cfg.Redis.PoolSize, cfg.Worker.RedisTimeout)
+	rdb, err := infra.SetupRedis(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, cfg.Redis.PoolSize,
+		cfg.Worker.RedisTimeout, cfg.Redis.MaxRetries, cfg.Redis.RetryDelay)
 	if err != nil {
 		slog.Error("Failed to set up Redis", "error", err)
 		os.Exit(1)
@@ -93,7 +93,7 @@ func main() {
 			continue
 		}
 
-		ctx, cancel = context.WithTimeout(context.Background(), cfg.Crawler.PublishTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER
+		ctx, cancel = context.WithTimeout(context.Background(), cfg.Worker.PublishTimeout) // MUST CANCEL MANUALLY; DO NOT DEFER
 		err = ch.PublishWithContext(ctx,
 			"",                 // exchange
 			keys.FrontierQueue, // routing key

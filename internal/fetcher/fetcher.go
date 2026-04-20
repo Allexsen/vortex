@@ -12,8 +12,6 @@ import (
 	"time"
 )
 
-const MaxBodySize = 10 << 20 // 10 MB
-
 var privateRanges []*net.IPNet
 
 func init() {
@@ -39,14 +37,18 @@ type HTTPClient interface {
 }
 
 type Fetcher struct {
-	client    HTTPClient
-	userAgent string
+	client      HTTPClient
+	userAgent   string
+	maxBodySize int
+	retryAfter  time.Duration
 }
 
-func NewFetcher(client HTTPClient, userAgent string) *Fetcher {
+func NewFetcher(client HTTPClient, userAgent string, maxBodySize int, retryAfter time.Duration) *Fetcher {
 	return &Fetcher{
-		client:    client,
-		userAgent: userAgent,
+		client:      client,
+		userAgent:   userAgent,
+		maxBodySize: maxBodySize,
+		retryAfter:  retryAfter,
 	}
 }
 
@@ -80,7 +82,7 @@ func (f *Fetcher) Fetch(ctx context.Context, rawURL string) ([]byte, error) {
 		retryAfterStr := resp.Header.Get("Retry-After")
 		retryAfter, err := strconv.Atoi(retryAfterStr)
 		if err != nil {
-			return nil, &RateLimitedError{RetryAfter: 60 * time.Second}
+			return nil, &RateLimitedError{RetryAfter: f.retryAfter}
 		}
 
 		return nil, &RateLimitedError{RetryAfter: time.Duration(retryAfter) * time.Second}
@@ -96,14 +98,14 @@ func (f *Fetcher) Fetch(ctx context.Context, rawURL string) ([]byte, error) {
 		return nil, fmt.Errorf("unsupported content type: %s", ct)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxBodySize+1))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, int64(f.maxBodySize+1)))
 	if err != nil {
 		FetchErrorsTotal.WithLabelValues("read_body_error").Inc()
 		return nil, err
 	}
-	if len(body) > MaxBodySize {
+	if len(body) > f.maxBodySize {
 		FetchErrorsTotal.WithLabelValues("body_too_large").Inc()
-		return nil, fmt.Errorf("response body exceeds %d bytes", MaxBodySize)
+		return nil, fmt.Errorf("response body exceeds %d bytes", f.maxBodySize)
 	}
 
 	return body, nil

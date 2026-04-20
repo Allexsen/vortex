@@ -13,13 +13,15 @@ type Config struct {
 	Worker   WorkerConfig
 	Manager  ManagerConfig
 	Robots   RobotsConfig
-	Crawler  CrawlerConfig
 	Fetcher  FetcherConfig
 	Search   SearchConfig
 }
 
 type RabbitMQConfig struct {
 	URL string
+
+	MaxRetries int
+	RetryDelay time.Duration
 }
 
 type RedisConfig struct {
@@ -27,14 +29,26 @@ type RedisConfig struct {
 	Password string
 	DB       int
 	PoolSize int
+
+	MaxRetries int
+	RetryDelay time.Duration
 }
 
 type WorkerConfig struct {
-	Count        int
-	MaxRetries   int
-	TaskTimeout  time.Duration
-	RedisTimeout time.Duration
-	MetricsPort  string
+	Count      int
+	MaxDepth   int
+	MaxRetries int
+
+	TaskTimeout    time.Duration
+	RedisTimeout   time.Duration
+	PublishTimeout time.Duration
+	MetricsPort    string
+
+	RateLimit float64
+	RateBurst int
+
+	CooldownTTL    time.Duration
+	PollerInterval time.Duration
 }
 
 type ManagerConfig struct {
@@ -51,47 +65,56 @@ type RobotsConfig struct {
 	DeniedCacheTTL time.Duration
 }
 
-type CrawlerConfig struct {
-	MaxDepth       int
-	RateLimit      float64
-	RateBurst      int
-	CooldownTTL    time.Duration
-	PollerInterval time.Duration
-	PublishTimeout time.Duration
-}
-
 type FetcherConfig struct {
-	Timeout   time.Duration
-	UserAgent string
+	UserAgent   string
+	MaxBodySize int
+	Timeout     time.Duration
+	RetryAfter  time.Duration
 }
 
 type SearchConfig struct {
+	Port        string
 	PostgresURL string
 	EmbedderURL string
-	Port        string
-	Timeout     time.Duration
+
+	Timeout         time.Duration
+	ShutdownTimeout time.Duration
 
 	RateLimit int
 	RateBurst int
+
+	MaxQueryLength int
+	DefaultTopK    int
+	MaxTopK        int
 }
 
 func Load() (*Config, error) {
 	return &Config{
 		RabbitMQ: RabbitMQConfig{
-			URL: getString("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
+			URL:        getString("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/"),
+			MaxRetries: getInt("RABBITMQ_MAX_RETRIES", 3),
+			RetryDelay: getDuration("RABBITMQ_RETRY_DELAY", 5*time.Second),
 		},
 		Redis: RedisConfig{
-			Addr:     getString("REDIS_ADDR", "localhost:6379"),
-			Password: getString("REDIS_PASSWORD", ""),
-			DB:       getInt("REDIS_DB", 0),
-			PoolSize: getInt("REDIS_POOL_SIZE", 10),
+			Addr:       getString("REDIS_ADDR", "localhost:6379"),
+			Password:   getString("REDIS_PASSWORD", ""),
+			DB:         getInt("REDIS_DB", 0),
+			PoolSize:   getInt("REDIS_POOL_SIZE", 10),
+			MaxRetries: getInt("REDIS_MAX_RETRIES", 3),
+			RetryDelay: getDuration("REDIS_RETRY_DELAY", 5*time.Second),
 		},
 		Worker: WorkerConfig{
-			Count:        getInt("WORKER_COUNT", 50),
-			MaxRetries:   getInt("WORKER_MAX_RETRIES", 3),
-			TaskTimeout:  getDuration("WORKER_TASK_TIMEOUT", 60*time.Second),
-			RedisTimeout: getDuration("WORKER_REDIS_TIMEOUT", 5*time.Second),
-			MetricsPort:  getString("WORKER_METRICS_PORT", "2112"),
+			Count:          getInt("WORKER_COUNT", 50),
+			MaxDepth:       getInt("WORKER_MAX_DEPTH", 3),
+			MaxRetries:     getInt("WORKER_MAX_RETRIES", 3),
+			TaskTimeout:    getDuration("WORKER_TASK_TIMEOUT", 60*time.Second),
+			RedisTimeout:   getDuration("WORKER_REDIS_TIMEOUT", 5*time.Second),
+			PublishTimeout: getDuration("WORKER_PUBLISH_TIMEOUT", 5*time.Second),
+			MetricsPort:    getString("WORKER_METRICS_PORT", "2112"),
+			RateLimit:      getFloat64("WORKER_RATE_LIMIT", 1.0),
+			RateBurst:      getInt("WORKER_RATE_BURST", 5),
+			CooldownTTL:    getDuration("WORKER_COOLDOWN_TTL", 1*time.Second),
+			PollerInterval: getDuration("WORKER_POLLER_INTERVAL", 5*time.Second),
 		},
 		Manager: ManagerConfig{
 			PollInterval:       getDuration("MANAGER_POLL_INTERVAL", 2*time.Second),
@@ -105,25 +128,23 @@ func Load() (*Config, error) {
 			CacheTTL:       getDuration("ROBOTS_CACHE_TTL", 24*time.Hour),
 			DeniedCacheTTL: getDuration("ROBOTS_DENIED_CACHE_TTL", 2*time.Hour),
 		},
-		Crawler: CrawlerConfig{
-			MaxDepth:       getInt("CRAWLER_MAX_DEPTH", 3),
-			RateLimit:      getFloat64("CRAWLER_RATE_LIMIT", 1.0),
-			RateBurst:      getInt("CRAWLER_RATE_BURST", 5),
-			CooldownTTL:    getDuration("CRAWLER_COOLDOWN_TTL", 1*time.Second),
-			PollerInterval: getDuration("CRAWLER_POLLER_INTERVAL", 5*time.Second),
-			PublishTimeout: getDuration("CRAWLER_PUBLISH_TIMEOUT", 5*time.Second),
-		},
 		Fetcher: FetcherConfig{
-			Timeout:   getDuration("FETCHER_TIMEOUT", 30*time.Second),
-			UserAgent: getString("FETCHER_USER_AGENT", "VortexBot/1.0"),
+			UserAgent:   getString("FETCHER_USER_AGENT", "VortexBot/1.0"),
+			MaxBodySize: getInt("FETCHER_MAX_BODY_SIZE", 10<<20), // 10 MiB
+			Timeout:     getDuration("FETCHER_TIMEOUT", 30*time.Second),
+			RetryAfter:  getDuration("FETCHER_RETRY_AFTER", 60*time.Second),
 		},
 		Search: SearchConfig{
-			PostgresURL: getString("POSTGRES_URL", "postgres://vortex:vortex@localhost:5432/vortex"),
-			EmbedderURL: getString("SEARCH_EMBED_URL", "http://embedder:8000/embed"),
-			Port:        getString("SEARCH_PORT", "8080"),
-			Timeout:     getDuration("SEARCH_TIMEOUT", 10*time.Second),
-			RateLimit:   getInt("SEARCH_RATE_LIMIT", 3),
-			RateBurst:   getInt("SEARCH_RATE_BURST", 10),
+			Port:            getString("SEARCH_PORT", "8080"),
+			PostgresURL:     getString("POSTGRES_URL", "postgres://vortex:vortex@localhost:5432/vortex"),
+			EmbedderURL:     getString("SEARCH_EMBED_URL", "http://embedder:8000/embed"),
+			Timeout:         getDuration("SEARCH_TIMEOUT", 10*time.Second),
+			ShutdownTimeout: getDuration("SEARCH_SHUTDOWN_TIMEOUT", 15*time.Second),
+			RateLimit:       getInt("SEARCH_RATE_LIMIT", 3),
+			RateBurst:       getInt("SEARCH_RATE_BURST", 10),
+			MaxQueryLength:  getInt("SEARCH_MAX_QUERY_LENGTH", 256),
+			DefaultTopK:     getInt("SEARCH_DEFAULT_TOP_K", 10),
+			MaxTopK:         getInt("SEARCH_MAX_TOP_K", 50),
 		},
 	}, nil
 }

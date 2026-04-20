@@ -1,13 +1,14 @@
 
 
-def chunk_text(text, chunk_size=500, overlap=100):
+def chunk_text(text, chunk_size=250, overlap=50):
     """
     Splits the input text into chunks of specified size with optional overlap.
 
     Args:
         text (str): The input text to be chunked.
-        chunk_size (int): The maximum size of each chunk. Default is 500 words.
-        overlap (int): The number of words to overlap between chunks. Default is 100 words.
+        chunk_size (int): The maximum size of each chunk in words. Default is 250
+                          (~325 tokens, fits all-mpnet-base-v2's 384-token window).
+        overlap (int): The number of words to overlap between chunks. Default is 50 words.
 
     Returns:
         List[str]: A list of text chunks.

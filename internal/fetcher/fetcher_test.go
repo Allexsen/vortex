@@ -189,7 +189,7 @@ func TestFetch(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mock := &mockHTTPClient{resp: tt.resp, err: tt.clientErr}
-			f := fetcher.NewFetcher(mock, "TestBot/1.0")
+			f := fetcher.NewFetcher(mock, "TestBot/1.0", 100, 60*time.Second)
 
 			body, err := f.Fetch(context.Background(), tt.url)
 
@@ -240,7 +240,7 @@ func TestFetchSetsUserAgent(t *testing.T) {
 	f := fetcher.NewFetcher(&uaCapturingClient{
 		inner:      mock,
 		capturedUA: &capturedUA,
-	}, "VortexBot/1.0")
+	}, "VortexBot/1.0", 100, 60*time.Second)
 
 	f.Fetch(context.Background(), "https://example.com")
 
@@ -261,7 +261,7 @@ func (c *uaCapturingClient) Do(req *http.Request) (*http.Response, error) {
 
 func TestFetchBodySizeLimit(t *testing.T) {
 	// Create a body that exceeds MaxBodySize
-	oversized := strings.Repeat("a", fetcher.MaxBodySize+1)
+	oversized := strings.Repeat("a", 200)
 	mock := &mockHTTPClient{
 		resp: &http.Response{
 			StatusCode: 200,
@@ -270,7 +270,7 @@ func TestFetchBodySizeLimit(t *testing.T) {
 		},
 	}
 
-	f := fetcher.NewFetcher(mock, "TestBot/1.0")
+	f := fetcher.NewFetcher(mock, "TestBot/1.0", 100, 60*time.Second)
 	_, err := f.Fetch(context.Background(), "https://example.com")
 
 	if err == nil {
