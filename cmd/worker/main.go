@@ -23,8 +23,7 @@ import (
 )
 
 func main() {
-	const logDir = "logs"
-	cleanupFunc, err := infra.SetupLogger(logDir)
+	cleanupFunc, err := infra.SetupLogger("worker")
 	if err != nil {
 		slog.Error("Failed to set up logger", "error", err)
 		os.Exit(1)
@@ -41,7 +40,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	conn, ch, err := infra.SetupRabbitMQ(cfg.RabbitMQ.URL)
+	conn, ch, err := infra.SetupRabbitMQ(cfg.RabbitMQ.URL, cfg.RabbitMQ.MaxRetries, cfg.RabbitMQ.RetryDelay)
 	if err != nil {
 		slog.Error("Failed to set up RabbitMQ", "error", err)
 		os.Exit(1)
@@ -69,7 +68,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	rdb, err := infra.SetupRedis(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, cfg.Redis.PoolSize, cfg.Worker.RedisTimeout)
+	rdb, err := infra.SetupRedis(cfg.Redis.Addr, cfg.Redis.Password, cfg.Redis.DB, cfg.Redis.PoolSize,
+		cfg.Worker.RedisTimeout, cfg.Redis.MaxRetries, cfg.Redis.RetryDelay)
 	if err != nil {
 		slog.Error("Failed to set up Redis", "error", err)
 		os.Exit(1)
@@ -80,7 +80,7 @@ func main() {
 		}
 	}()
 
-	limiter := ratelimit.NewRedisLimiter(rdb, keys.RateLimitPrefix, cfg.Crawler.RateLimit, cfg.Crawler.RateBurst)
+	limiter := ratelimit.NewRedisLimiter(rdb, keys.RateLimitPrefix, cfg.Worker.RateLimit, cfg.Worker.RateBurst)
 	queue := cooldown.NewRedisQueue(rdb, keys.CooldownQueue)
 
 	httpClient := &http.Client{Timeout: cfg.Robots.HTTPTimeout}
@@ -95,7 +95,7 @@ func main() {
 	)
 
 	httpClientWithTimeout := &http.Client{Timeout: cfg.Fetcher.Timeout}
-	fetcher := httpFetcher.NewFetcher(httpClientWithTimeout, cfg.Fetcher.UserAgent)
+	fetcher := httpFetcher.NewFetcher(httpClientWithTimeout, cfg.Fetcher.UserAgent, cfg.Fetcher.MaxBodySize, cfg.Fetcher.RetryAfter)
 	bloomFilter := cache.NewBloomFilter(rdb, keys.SeenBloomFilter)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -123,8 +123,8 @@ func main() {
 			defer wg.Done()
 			w := worker.NewWorker(fmt.Sprintf("worker-%d", i),
 				conn, manager, limiter, queue, robots, fetcher, bloomFilter,
-				cfg.Crawler.MaxDepth, cfg.Worker.MaxRetries,
-				cfg.Crawler.PublishTimeout, cfg.Worker.RedisTimeout, cfg.Worker.TaskTimeout, cfg.Crawler.CooldownTTL,
+				cfg.Worker.MaxDepth, cfg.Worker.MaxRetries,
+				cfg.Worker.PublishTimeout, cfg.Worker.RedisTimeout, cfg.Worker.TaskTimeout, cfg.Worker.CooldownTTL,
 				keys.FrontierQueue, keys.ProcessingQueue,
 			)
 			if err := w.Run(ctx); err != nil {
@@ -136,7 +136,7 @@ func main() {
 	}
 
 	wg.Add(1)
-	p := worker.NewPoller(queue, conn, manager, cfg.Crawler.PollerInterval)
+	p := worker.NewPoller(queue, conn, manager, cfg.Worker.PollerInterval)
 	go func() {
 		defer wg.Done()
 		p.Run(ctx)

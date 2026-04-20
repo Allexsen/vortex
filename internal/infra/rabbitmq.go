@@ -9,17 +9,17 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-func SetupRabbitMQ(url string) (*amqp.Connection, *amqp.Channel, error) {
+func SetupRabbitMQ(url string, maxRetries int, retryDelay time.Duration) (*amqp.Connection, *amqp.Channel, error) {
 	var err error
 	var conn *amqp.Connection
-	for i := 1; i <= 3; i++ {
+	for i := 1; i <= maxRetries; i++ {
 		conn, err = amqp.Dial(url)
 		if err == nil {
 			slog.Info("Connected to RabbitMQ")
 			break
 		}
-		slog.Warn("RabbitMQ not ready.. attempting to reconnect in 5s", "attempt", i, "error", err)
-		time.Sleep(5 * time.Second)
+		slog.Warn(fmt.Sprintf("RabbitMQ not ready.. attempting to reconnect in %v", retryDelay), "attempt", i, "error", err)
+		time.Sleep(retryDelay)
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to connect to rabbitmq: %w", err)

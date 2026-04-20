@@ -1,13 +1,18 @@
 package infra
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 )
 
-func SetupLogger(logDir string) (func(), error) {
+const (
+	logDir = "logs"
+)
+
+func SetupLogger(service string) (func(), error) {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
 
@@ -15,7 +20,7 @@ func SetupLogger(logDir string) (func(), error) {
 		return func() {}, err
 	}
 
-	logPath := filepath.Join(logDir, "vortex.log")
+	logPath := filepath.Join(logDir, fmt.Sprintf("vortex-%s.log", service))
 	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0666)
 	if err != nil {
 		return func() {}, err

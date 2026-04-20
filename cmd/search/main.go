@@ -21,10 +21,17 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+const (
+	staticDir = "cmd/search/static"
+)
+
 type Server struct {
 	db          *pgxpool.Pool
 	embedderURL string
 	timeout     time.Duration
+	maxQueryLen int
+	defaultTopK int
+	maxTopK     int
 }
 
 type SearchResult struct {
@@ -39,8 +46,7 @@ type SearchResponse struct {
 }
 
 func main() {
-	const logDir = "logs"
-	cleanupFunc, err := infra.SetupLogger(logDir)
+	cleanupFunc, err := infra.SetupLogger("search")
 	if err != nil {
 		slog.Error("Failed to set up logger", "error", err)
 		os.Exit(1)
@@ -69,13 +75,20 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	server := &Server{db: conn, embedderURL: cfg.Search.EmbedderURL, timeout: cfg.Search.Timeout}
+	server := &Server{
+		db:          conn,
+		embedderURL: cfg.Search.EmbedderURL,
+		timeout:     cfg.Search.Timeout,
+		maxQueryLen: cfg.Search.MaxQueryLength,
+		defaultTopK: cfg.Search.DefaultTopK,
+		maxTopK:     cfg.Search.MaxTopK,
+	}
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("GET /health", server.healthHandler)
 
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir("cmd/search/static"))))
+	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "cmd/search/static/index.html")
+		http.ServeFile(w, r, staticDir+"/index.html")
 	})
 
 	limiter := NewIPRateLimiter(float64(cfg.Search.RateLimit), cfg.Search.RateBurst)
@@ -86,7 +99,7 @@ func main() {
 	go func() {
 		<-ctx.Done()
 		slog.Info("Shutting down search server...")
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Search.ShutdownTimeout)
 		defer cancel()
 		httpServer.Shutdown(shutdownCtx)
 	}()
@@ -127,7 +140,7 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing query parameter 'q'", http.StatusBadRequest)
 		return
 	}
-	if len(q) > 2000 {
+	if len(q) > s.maxQueryLen {
 		SearchRequestsTotal.WithLabelValues("error").Inc()
 		http.Error(w, "query too long", http.StatusBadRequest)
 		return
@@ -146,14 +159,14 @@ func (s *Server) searchHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := 10
+	limit := s.defaultTopK
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
 		if l, err := strconv.Atoi(limitStr); err == nil {
 			limit = l
 			if limit < 1 {
 				limit = 1
-			} else if limit > 30 {
-				limit = 30
+			} else if limit > s.maxTopK {
+				limit = s.maxTopK
 			}
 		}
 	}
